@@ -1,0 +1,209 @@
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from typing import List, Tuple, Optional
+from titans_pytorch import NeuralMemory, MemoryAsContextTransformer
+
+class ByteLevelTokenizer:
+    def __init__(self):
+        self.vocab_size = 256  # Full byte range
+        
+    def encode(self, text: str) -> torch.Tensor:
+        """Convert text to byte-level tokens"""
+        bytes_data = text.encode('utf-8')
+        return torch.tensor([b for b in bytes_data], dtype=torch.long)
+    
+    def decode(self, tokens: torch.Tensor) -> str:
+        """Convert byte-level tokens back to text"""
+        return bytes(tokens.cpu().tolist()).decode('utf-8', errors='replace')
+
+class ByteLevelDiffTransformer(nn.Module):
+    def __init__(self, 
+                 dim: int,
+                 num_experts: int = 3,
+                 num_layers: int = 12,
+                 heads: int = 8,
+                 dropout: float = 0.1,
+                 segment_len: int = 128,
+                 num_persist_mem_tokens: int = 4,
+                 num_longterm_mem_tokens: int = 16,
+                 max_sequence_length: int = 8192):  # Support for longer sequences
+        super().__init__()
+        self.dim = dim
+        self.num_layers = num_layers
+        self.num_experts = num_experts
+        self.max_sequence_length = max_sequence_length
+        
+        # Byte-level embedding
+        self.byte_embeddings = nn.Embedding(256, dim)  # 256 for full byte range
+        self.pos_embedding = nn.Parameter(torch.randn(1, max_sequence_length, dim))
+        
+        # Expert system for task adaptation
+        self.task_experts = nn.ModuleList([
+            nn.Parameter(torch.randn(dim))
+            for _ in range(num_experts)
+        ])
+        
+        # Memory transformers with byte-level support
+        self.memory_transformers = nn.ModuleList([
+            MemoryAsContextTransformer(
+                num_tokens=256,  # Byte vocabulary
+                dim=dim,
+                depth=1,
+                segment_len=segment_len,
+                num_persist_mem_tokens=num_persist_mem_tokens,
+                num_longterm_mem_tokens=num_longterm_mem_tokens
+            )
+            for _ in range(num_layers)
+        ])
+        
+        # Layers with differential attention
+        self.layers = nn.ModuleList([
+            TransformerLayerWithMemory(
+                dim=dim,
+                heads=heads,
+                dropout=dropout,
+                memory_transformer=self.memory_transformers[i]
+            )
+            for i in range(num_layers)
+        ])
+        
+        self.norm = nn.LayerNorm(dim)
+        
+        # Byte-level output projection
+        self.to_bytes = nn.Linear(dim, 256)  # Project back to byte space
+        
+    def forward(self, 
+                byte_tokens: torch.Tensor,
+                expert_weights: Optional[torch.Tensor] = None,
+                return_attention: bool = False) -> torch.Tensor:
+        """Two-pass mechanism with byte-level processing"""
+        attention_maps = [] if return_attention else None
+        B, N = byte_tokens.shape
+        
+        # Embed bytes and add position encoding
+        x = self.byte_embeddings(byte_tokens)
+        x = x + self.pos_embedding[:, :N]
+        
+        # First pass - task identification
+        if expert_weights is None:
+            for layer in self.layers:
+                x, attn = layer(x, return_attention=return_attention)
+                if return_attention:
+                    attention_maps.append(attn)
+            return x, attention_maps if return_attention else x
+            
+        # Second pass - with task adaptation
+        task_embedding = torch.zeros_like(self.task_experts[0])
+        for i, weight in enumerate(expert_weights):
+            task_embedding += weight * self.task_experts[i]
+            
+        for i, layer in enumerate(self.layers):
+            x, attn = layer(x, task_embedding=task_embedding, return_attention=return_attention)
+            if return_attention:
+                attention_maps.append(attn)
+                
+        x = self.norm(x)
+        
+        # Project back to byte space if needed
+        if not return_attention:
+            x = self.to_bytes(x)
+            
+        return x, attention_maps if return_attention else x
+
+class TransformerLayerWithMemory(nn.Module):
+    def __init__(self, dim: int, heads: int, dropout: float, memory_transformer: nn.Module):
+        super().__init__()
+        self.diff_attention = DifferentialAttention(dim, heads, dropout)
+        self.feed_forward = FeedForward(dim, dropout)
+        self.memory_transformer = memory_transformer
+        self.norm1 = nn.LayerNorm(dim)
+        self.norm2 = nn.LayerNorm(dim)
+        self.norm3 = nn.LayerNorm(dim)
+        
+    def forward(self, 
+                x: torch.Tensor,
+                task_embedding: Optional[torch.Tensor] = None,
+                return_attention: bool = False) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+        # Differential attention
+        attn_out, attn_weights = self.diff_attention(self.norm1(x), task_embedding=task_embedding, return_attention=True)
+        x = x + attn_out
+        
+        # Memory attention
+        memory_out = self.memory_transformer(x)
+        x = x + self.norm2(memory_out)
+        
+        # Feed forward
+        x = x + self.feed_forward(self.norm3(x))
+        
+        if return_attention:
+            return x, attn_weights
+        return x, None
+
+class DifferentialAttention(nn.Module):
+    def __init__(self, dim: int, heads: int, dropout: float):
+        super().__init__()
+        self.heads = heads
+        self.scale = (dim // heads) ** -0.5
+        
+        # Differential attention components
+        self.to_qkv = nn.Linear(dim, dim * 3)
+        self.to_out = nn.Linear(dim, dim)
+        
+        # Task adaptation components
+        self.task_proj = nn.Linear(dim, dim)
+        self.diff_gates = nn.Linear(dim, heads)
+        
+        self.dropout = nn.Dropout(dropout)
+        
+    def forward(self, 
+                x: torch.Tensor,
+                task_embedding: Optional[torch.Tensor] = None,
+                return_attention: bool = False) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+        B, N, D = x.shape
+        H = self.heads
+        
+        # Get queries, keys, values
+        qkv = self.to_qkv(x).chunk(3, dim=-1)
+        q, k, v = map(lambda t: t.reshape(B, N, H, -1).transpose(1, 2), qkv)
+        
+        # Compute base attention scores
+        dots = torch.matmul(q, k.transpose(-2, -1)) * self.scale
+        
+        if task_embedding is not None:
+            # Project task embedding
+            task_info = self.task_proj(task_embedding)
+            
+            # Compute differential gates based on task
+            gates = self.diff_gates(task_info)  # [B, H]
+            gates = gates.softmax(dim=-1).view(B, H, 1, 1)
+            
+            # Apply task-specific gating
+            dots = dots * gates
+        
+        # Attention weights with gradients
+        attn = F.softmax(dots, dim=-1)
+        attn = self.dropout(attn)
+        
+        # Compute output
+        out = torch.matmul(attn, v)
+        out = out.transpose(1, 2).reshape(B, N, D)
+        out = self.to_out(out)
+        
+        if return_attention:
+            return out, attn
+        return out, None
+
+class FeedForward(nn.Module):
+    def __init__(self, dim: int, dropout: float):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(dim, dim * 4),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(dim * 4, dim),
+            nn.Dropout(dropout)
+        )
+        
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.net(x) 

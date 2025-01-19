@@ -1,0 +1,22 @@
+# Environment variables
+.env
+.env.*
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Data directories
+data/
+datasets/
+TrainingData/
+
+# Model checkpoints
+checkpoints/
+*.pt
+*.pth
+
+# Logs
+logs/
+*.log 

@@ -1,0 +1,7 @@
+torch>=2.0.0
+titans-pytorch>=0.1.0
+numpy>=1.21.0
+pillow>=8.0.0
+einops>=0.6.0
+trimesh>=3.9.0
+tqdm>=4.65.0
