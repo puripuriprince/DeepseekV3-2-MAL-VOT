@@ -14,13 +14,12 @@ from torch.utils.data import DataLoader
 from torch.distributions import Categorical
 from tqdm import tqdm
 import argparse
+from transformers import AutoModelForCausalLM, AutoTokenizer
 
 # Local imports
-from models.transformer_squared import TransformerSquared
-from models.byte_latent_patches import ByteLevelTokenizer
-from models.diff_attention import DifferentialAttention
-#from models.titan_memory import TitanMemoryLayer
-from config.model_config import ModelConfig
+from Sushi_model.transformer_squared import TransformerSquared
+from Sushi_model.byte_latent_patches import ByteLevelTokenizer
+
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
@@ -247,6 +246,268 @@ class Trainer:
                     'reasoning_stats': avg_reasoning
                 }, f"{save_dir}/best_model.pt")
 
+class DistillationTrainer:
+    def __init__(
+        self,
+        student_model: TransformerSquared,
+        tokenizer: ByteLevelTokenizer,
+        learning_rate: float = 2e-4,
+        temperature: float = 2.0,
+        alpha: float = 0.5,
+        device: str = "cuda" if torch.cuda.is_available() else "cpu"
+    ):
+        self.student = student_model.to(device)
+        self.tokenizer = tokenizer
+        self.device = device
+        self.temperature = temperature
+        self.alpha = alpha
+        
+        # Initialize DeepSeek teacher model
+        self.teacher = AutoModelForCausalLM.from_pretrained(
+            "deepseek-ai/deepseek-coder-33b-instruct",
+            torch_dtype=torch.bfloat16,
+            device_map="auto"
+        )
+        self.teacher.eval()
+        self.teacher_tokenizer = AutoTokenizer.from_pretrained(
+            "deepseek-ai/deepseek-coder-33b-instruct"
+        )
+        
+        # Optimizer
+        self.optimizer = optim.AdamW(student_model.parameters(), lr=learning_rate)
+        self.scheduler = optim.lr_scheduler.CosineAnnealingLR(self.optimizer, T_max=1000)
+
+    def compute_architecture_loss(
+        self,
+        outputs: Dict[str, torch.Tensor],
+        memory: torch.Tensor,
+        attention_maps: List[torch.Tensor]
+    ) -> Dict[str, torch.Tensor]:
+        """Compute losses for the architectural components"""
+        losses = {}
+        
+        # Memory coherence loss
+        if memory is not None:
+            memory_coherence = torch.var(memory, dim=1).mean()
+            losses['memory'] = memory_coherence
+        
+        # Differential attention diversity loss
+        if attention_maps:
+            attn_entropy = -torch.mean(
+                torch.sum(
+                    F.softmax(attention_maps[-1], dim=-1) * 
+                    F.log_softmax(attention_maps[-1], dim=-1),
+                    dim=-1
+                )
+            )
+            losses['attention'] = -attn_entropy  # Maximize entropy for diverse attention
+        
+        # Expert utilization loss
+        if 'expert_weights' in outputs:
+            expert_entropy = -torch.mean(
+                torch.sum(
+                    outputs['expert_weights'] * 
+                    torch.log(outputs['expert_weights'] + 1e-10),
+                    dim=-1
+                )
+            )
+            losses['expert'] = -expert_entropy  # Maximize entropy for balanced expert use
+        
+        return losses
+
+    def train_step(
+        self,
+        batch: Dict[str, torch.Tensor],
+    ) -> Dict[str, float]:
+        """Single training step with integrated architectural components"""
+        self.student.train()
+        self.optimizer.zero_grad()
+        
+        input_ids = batch["input_ids"].to(self.device)
+        target_ids = batch["target_ids"].to(self.device)
+        
+        # Enable test-time compute for reasoning analysis
+        self.student.enable_test_time()
+        
+        # Forward pass through student - using the integrated components
+        student_outputs = self.student(input_ids)
+        
+        # Get teacher predictions
+        with torch.no_grad():
+            teacher_inputs = self.convert_to_teacher_tokens(input_ids)
+            teacher_outputs = self.teacher(teacher_inputs.to(self.teacher.device))
+            teacher_logits = teacher_outputs.logits.to(self.device)
+        
+        # Get reasoning statistics
+        stats = self.student.get_compute_stats()
+        reasoning_analysis = self.analyze_reasoning(stats['reasoning_steps'][-1])
+        
+        # Compute architectural losses using the integrated components
+        architecture_losses = self.compute_architecture_loss(
+            student_outputs,
+            student_outputs.get('memory', None),
+            student_outputs.get('attention_maps', [])
+        )
+        
+        # Main losses
+        distillation_loss = self.compute_distillation_loss(
+            student_outputs['logits'], 
+            teacher_logits
+        )
+        
+        task_loss = F.cross_entropy(
+            student_outputs['logits'].view(-1, student_outputs['logits'].size(-1)),
+            target_ids.view(-1)
+        )
+        
+        reasoning_loss = self.compute_reasoning_loss(reasoning_analysis)
+        
+        # Combine all losses
+        architecture_loss = sum(architecture_losses.values())
+        total_loss = (
+            self.alpha * distillation_loss +
+            (1 - self.alpha) * task_loss +
+            0.1 * reasoning_loss +
+            0.1 * architecture_loss
+        )
+        
+        # Backward pass
+        total_loss.backward()
+        torch.nn.utils.clip_grad_norm_(self.student.parameters(), 1.0)
+        self.optimizer.step()
+        self.scheduler.step()
+        
+        # Disable test-time compute
+        self.student.disable_test_time()
+        
+        # Return metrics
+        metrics = {
+            "total_loss": total_loss.item(),
+            "distillation_loss": distillation_loss.item(),
+            "task_loss": task_loss.item(),
+            "reasoning_loss": reasoning_loss.item(),
+            "architecture_loss": architecture_loss.item(),
+            "mean_gate_value": np.mean(reasoning_analysis['gate_values']),
+            "mean_impact": np.mean(reasoning_analysis['step_impacts'])
+        }
+        
+        # Add individual architecture losses to metrics
+        for name, loss in architecture_losses.items():
+            metrics[f"{name}_loss"] = loss.item()
+        
+        return metrics
+
+    def convert_to_teacher_tokens(self, byte_tokens: torch.Tensor) -> torch.Tensor:
+        """Convert byte-level tokens to teacher model tokens"""
+        # Decode byte tokens to text
+        texts = self.tokenizer.batch_decode(byte_tokens)
+        # Encode with teacher tokenizer
+        teacher_tokens = self.teacher_tokenizer(
+            texts,
+            padding=True,
+            truncation=True,
+            return_tensors="pt"
+        )
+        return teacher_tokens.input_ids
+    
+    def compute_reasoning_loss(self, reasoning_stats: Dict) -> torch.Tensor:
+        """Compute loss based on reasoning quality"""
+        # Encourage consistent gate values
+        gate_std = torch.tensor(np.std(reasoning_stats['gate_values'])).to(self.device)
+        gate_loss = 1.0 / (1.0 + gate_std)
+        
+        # Encourage impactful reasoning steps
+        impact_mean = torch.tensor(np.mean(reasoning_stats['step_impacts'])).to(self.device)
+        impact_loss = -impact_mean  # Negative because we want to maximize impact
+        
+        return gate_loss + impact_loss
+
+    def train(
+        self,
+        train_dataloader: DataLoader,
+        val_dataloader: DataLoader,
+        num_epochs: int,
+        save_dir: str = "checkpoints"
+    ):
+        """Full training loop with knowledge distillation"""
+        best_val_loss = float('inf')
+        
+        for epoch in range(num_epochs):
+            # Training
+            self.student.train()
+            train_metrics = []
+            
+            pbar = tqdm(train_dataloader, desc=f"Epoch {epoch}")
+            for batch in pbar:
+                metrics = self.train_step(batch)
+                train_metrics.append(metrics)
+                pbar.set_postfix(metrics)
+            
+            # Validation
+            self.student.eval()
+            val_losses = []
+            val_reasoning_stats = []
+            
+            with torch.no_grad():
+                for batch in val_dataloader:
+                    self.student.enable_test_time()
+                    
+                    input_ids = batch["input_ids"].to(self.device)
+                    target_ids = batch["target_ids"].to(self.device)
+                    
+                    # Get student and teacher predictions
+                    student_outputs = self.student(input_ids)
+                    teacher_inputs = self.convert_to_teacher_tokens(input_ids)
+                    teacher_outputs = self.teacher(teacher_inputs.to(self.teacher.device))
+                    
+                    # Compute validation losses
+                    distill_loss = self.compute_distillation_loss(
+                        student_outputs['logits'],
+                        teacher_outputs.logits.to(self.device)
+                    )
+                    task_loss = F.cross_entropy(
+                        student_outputs['logits'].view(-1, student_outputs['logits'].size(-1)),
+                        target_ids.view(-1)
+                    )
+                    
+                    # Get reasoning statistics
+                    stats = self.student.get_compute_stats()
+                    reasoning_analysis = self.analyze_reasoning(stats['reasoning_steps'][-1])
+                    val_reasoning_stats.append(reasoning_analysis)
+                    
+                    total_loss = self.alpha * distill_loss + (1 - self.alpha) * task_loss
+                    val_losses.append(total_loss.item())
+                    
+                    self.student.disable_test_time()
+            
+            val_loss = sum(val_losses) / len(val_losses)
+            
+            # Compute average reasoning metrics
+            avg_reasoning = {
+                'gate_values': np.mean([s['gate_values'] for s in val_reasoning_stats]),
+                'step_impacts': np.mean([s['step_impacts'] for s in val_reasoning_stats])
+            }
+            
+            # Logging
+            logger.info(
+                f"Epoch {epoch}: "
+                f"train_loss={sum(m['total_loss'] for m in train_metrics)/len(train_metrics):.4f}, "
+                f"val_loss={val_loss:.4f}, "
+                f"avg_gate={avg_reasoning['gate_values']:.4f}, "
+                f"avg_impact={avg_reasoning['step_impacts']:.4f}"
+            )
+            
+            # Save best model
+            if val_loss < best_val_loss:
+                best_val_loss = val_loss
+                torch.save({
+                    'epoch': epoch,
+                    'model_state_dict': self.student.state_dict(),
+                    'optimizer_state_dict': self.optimizer.state_dict(),
+                    'val_loss': val_loss,
+                    'reasoning_stats': avg_reasoning
+                }, f"{save_dir}/best_model.pt")
+
 def test_model(
     model: TransformerSquared,
     tokenizer: ByteLevelTokenizer,
@@ -387,11 +648,12 @@ if __name__ == "__main__":
     if args.train:
         # Create trainer
         tokenizer = ByteLevelTokenizer()
-        trainer = Trainer(
-            model=model,
+        trainer = DistillationTrainer(
+            student_model=model,
             tokenizer=tokenizer,
             learning_rate=config['learning_rate'],
-            kl_coef=config['kl_coef']
+            temperature=config['temperature'],
+            alpha=config['alpha']
         )
         
         # Create dataloaders
