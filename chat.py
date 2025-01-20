@@ -1,7 +1,7 @@
 import torch
 import torch.nn.functional as F
-from models.transformer_squared import TransformerSquared
-from models.byte_latent_patches import ByteLevelTokenizer
+from Sushi_model.transformer_squared import TransformerSquared
+from Sushi_model.byte_latent_patches import ByteLevelTokenizer
 import argparse
 import json
 from typing import Dict, List, Tuple
@@ -13,7 +13,6 @@ from rich.progress import Progress
 import os
 import logging
 from tqdm import tqdm
-from models.test_processor import TestProcessor
 
 console = Console()
 logger = logging.getLogger(__name__)

@@ -7,6 +7,5 @@ __all__ = [
     'TransformerSquared',
     'ByteLatentPatches',
     'ByteLevelTokenizer',
-    'DifferentialAttention',
-    #'TitanMemoryLayer'
+    'DifferentialAttention'
 ] 
