@@ -3,6 +3,8 @@
 Mind's Eye of LLMs: Visualization-of-Thought Elicits Spatial Reasoning in Large Language Models
 
 
+Full implementation here https://github.com/microsoft/visualization-of-thought.git
+
 
 Wenshan Wu†  Shaoguang Mao†  Yadong Zhang†, ‡,*
 Yan Xia†  Li Dong†  Lei Cui†  Furu Wei†
@@ -157,8 +159,46 @@ On the other hand, performance of GPT-4 VoT is still far from perfect in all tas
      †We use this term for simplicity. In natural language navigation tasks, LLMs often output additional words in the extracted answer besides the expected object name. For example, "Answer: You will find ...". In this case, sub-string matching is adopted without affecting the correctness. Otherwise, exact matching is adopted for multiple choice questions in visual tasks.
 
 
-SettingsVisual Navigation
-Visual TilingNatural-Language NavigationRoute PlanningNext Step PredictionCompleting RateSucc RateGPT-4 CoT37.029.4848.6154.1554.00GPT-4 w/o Viz37.1710.2848.4946.9835.50GPT-4V CoT33.365.6546.5949.62/GPT-4 VoT40.7714.7255.2863.9459.00Table 1: Performance of different GPT-4/4V settings in all tasks. Underline denotes statistical significance with p < 0.05 when comparing GPT-4 VoT against all baselines using two-sample z-test, while p < 0.16 is observed compared with GPT-4 CoT in natural language navigation task.
+Settings
+Visual Navigation
+Visual Tiling
+Natural-Language Navigation
+
+Route Planning
+Next Step Prediction
+
+
+
+Completing Rate
+Succ Rate
+
+
+
+GPT-4 CoT
+37.02
+9.48
+48.61
+54.15
+54.00
+GPT-4 w/o Viz
+37.17
+10.28
+48.49
+46.98
+35.50
+GPT-4V CoT
+33.36
+5.65
+46.59
+49.62
+/
+GPT-4 VoT
+40.77
+14.72
+55.28
+63.94
+59.00
+Table 1: Performance of different GPT-4/4V settings in all tasks. Underline denotes statistical significance with p < 0.05 when comparing GPT-4 VoT against all baselines using two-sample z-test, while p < 0.16 is observed compared with GPT-4 CoT in natural language navigation task.
 
 5 Analysis
 As explained in section 3, one of the core aspects of VoT lies in enabling LLMs with visual state tracking. During the experiments, it was observed that GPT-4 CoT occasionally exhibited this reason- ing pattern across several tasks with exception of route planning. Besides, incorrect visualizations of VoT are commonly observed in model outputs. In this section, our analysis of VoT primarily focuses on three questions: (1) Do visual state tracking behaviors differ among prompting methods? (2) How visualizations enhance final answers? (3) Can VoT benefit less powerful language models?
@@ -195,10 +235,21 @@ tiling task. Specifically, for visual navigation task, we extract the visualized
 (1) Compliance, indicating whether the manipulation of mental image satisfies requirements such as avoiding overlap and navigating around obstacles. (2) Accuracy, indicating whether the mental image aligns with the corresponding state. The spatial understanding capability is measured by the proportion of correct answers when the corresponding visualization is generated accurately.
 As could be seen from Table 2, LLMs demonstrate promising potential in performing multi-hop visualization while adhering to spatial constraints, with compliance rates of approximately 51-52%. However, the relatively low accuracy of state visualization (around 24%-26%) indicates a need for significant improvements in this area. Despite this limitation, LLMs are able to make correct decisions in 65%-77% of the cases when accurate internal state visualizations are generated, which enhances groundedness and contributes to notable performance gains. Several case studies are provided in Appendix E for interested readers.
 
-TaskSpatial VisualizationSpatial UnderstandingComplianceAccuracyAccuracyVisual Navigation Visual Tilling51.14
-52.0126.48
-24.2565.16
-77.20 Table 2: Spatial visualization/understanding evaluation in visual navigation and visual tiling task.
+Task
+Spatial Visualization
+Spatial Understanding
+
+Compliance
+Accuracy
+Accuracy
+Visual Navigation Visual Tilling
+51.14
+52.01
+26.48
+24.25
+65.16
+77.20
+ Table 2: Spatial visualization/understanding evaluation in visual navigation and visual tiling task.
 
 On the other hand, VoT prompting might underperform in those tasks where LLMs can leverage logical reasoning without visualizing internal states. We conducted experiments in natural language navigation within a ring [YBL+23], where navigation instructions are either clockwise or counter- clockwise movements. By normalizing each instruction to a signed number, GPT-4 converts this task to mathematical calculation of adding and modulus operation. For example, instructions of 15 steps clockwise and 3 steps counter-clockwise are normalized to (15 - 3) % 12. Results show that GPT-4 CoT outperforms GPT-4 VoT with 52.5% VS 49.5% among 200 test instances with ring size of 12.
 5.3 Can VoT benefit less powerful language models?
@@ -209,23 +260,55 @@ As shown in Table 3, within the same model family, performance improves across a
 Spatial Reasoning over Text Spatial reasoning and spatial language understanding [KPM20] in NLP domain mainly focus on semantic representation [CBGG97, Bat10, HK11], spatial information extraction [RMK18, KVOM11], learning and reasoning [KM15, SLYA17, KFP19]. Recent advance- ments have further explored spatial reasoning within the context of large language models (LLMs). To improve multi-hop spatial reasoning skills of language models, several works [MFNK21, MK22] proposed to pretrain language models with synthetic datasets. An increasing number of dataset were then developed to covers various type of spatial relations in 2D visual scenes [WBC+15, SZL22],
 
 
-SettingsVisual Navigation
-Visual TilingNatural-Language NavigationRoute PlanningNext Step PredictionCompleting RateSucc RateGPT-3.5 CoT GPT-3.5 VoT16.10
-19.022.62
-1.6117.42
-13.1044.10
-47.998.50
-9.00LLAMA3-8B CoT LLAMA3-8B VoT4.65
-4.970
-0.228.73
-26.7547.24
-46.7316.50
-15.50LLAMA3-70B CoT LLAMA3-70B VoT19.90
-30.242.62
-5.8549.01
-54.0956.41
-56.0326.00
-32.50Table 3: Performance of VoT in GPT-3.5 and LLAMA3 models. Underline denotes statistical significance with p < 0.05 compared to corresponding CoT baseline using two-sample z-test.
+Settings
+Visual Navigation
+Visual Tiling
+Natural-Language Navigation
+
+Route Planning
+Next Step Prediction
+
+
+
+Completing Rate
+Succ Rate
+
+
+
+GPT-3.5 CoT GPT-3.5 VoT
+16.10
+19.02
+2.62
+1.61
+17.42
+13.10
+44.10
+47.99
+8.50
+9.00
+LLAMA3-8B CoT LLAMA3-8B VoT
+4.65
+4.97
+0
+0.2
+28.73
+26.75
+47.24
+46.73
+16.50
+15.50
+LLAMA3-70B CoT LLAMA3-70B VoT
+19.90
+30.24
+2.62
+5.85
+49.01
+54.09
+56.41
+56.03
+26.00
+32.50
+Table 3: Performance of VoT in GPT-3.5 and LLAMA3 models. Underline denotes statistical significance with p < 0.05 compared to corresponding CoT baseline using two-sample z-test.
 
 geometric patterns [Cho19] and 3D spatial information [AMKK21, HZC+23]. [FML+22] investi- gated spatial reasoning capabilities of transformer-based models in the UI grounding setting. On the other hand, some works adopted in-context learning, leveraging LLMs for general purpose reasoning to convert spatial information to logic forms [YIL23], or as a general pattern machine for sequence transformation [MXF+23]. Recently, several works focused on evaluating spatial reasoning of LLMs as cognitive capability on navigation [YBL+23] and planning tasks [MHV+24] among various spatial structures. While most existing works rely on linguistic semantics and verbal reasoning, and might not always necessitate spatial awareness, we propose to elicit mind's eye of LLMs in spatial reasoning tasks with various formats from a cognitive perspective. The VoT prompting induces LLMs to create mental images for visualizing their internal states and inform subsequent reasoning step.
 
@@ -637,49 +720,62 @@ K-step Map
 
 Figure 9: Performance Trends of CoT and VoT Models Across difficulty levels in next-step-prediction task.
 
-ModelK-step MapMap CountCoT Accuracy (%)VoT Accuracy (%)
-GPT-42
+Model
+K-step Map
+Map Count
+CoT Accuracy (%)
+VoT Accuracy (%)
+GPT-4
+2
 3
 4
 5
 6
-78
+7
+8
 32
 96
 256
 640
-148875.00
+1488
+75.00
 68.75
 60.42
 50.78
 52.34
-45.3075.00
+45.30
+75.00
 62.50
 68.75
 64.06
 55.16
-52.69
-LLama3-70B2
+52.69
+LLama3-70B
+2
 3
 4
 5
 6
-78
+7
+8
 32
 96
 256
 640
-148862.50
+1488
+62.50
 68.75
 60.42
 56.25
 48.59
-46.7162.50
+46.71
+62.50
 65.63
 62.50
 57.42
 54.84
-52.35Table 6: CoT and VoT performance of advanced models in next-step-prediction task across various difficulty levels. While performance drops as difficulty level increases, VoT method generally maintains a higher accuracy compared to CoT, highlighting its robustness in more challenging scenarios.
+52.35
+Table 6: CoT and VoT performance of advanced models in next-step-prediction task across various difficulty levels. While performance drops as difficulty level increases, VoT method generally maintains a higher accuracy compared to CoT, highlighting its robustness in more challenging scenarios.
 
 E Case study
 We consider visual state tracking similar to spatiotemporal simulation. During the simulation in those tasks, we discovered several interesting behaviors of LLM.

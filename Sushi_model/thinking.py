@@ -1,208 +1,114 @@
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-from typing import List, Dict, Tuple, Optional, Union
-import numpy as np
+import logging
+from typing import Optional, Dict
+from config.model_config import ModelConfig
+
+logger = logging.getLogger(__name__)
 
 class ChainOfThought(nn.Module):
-    """
-    Implements chain-of-thought reasoning with support for multimodal context
-    including text, images and 3D meshes in the reasoning steps.
-    """
+    """Implements chain-of-thought reasoning with multimodal context"""
     def __init__(
         self,
         dim: int = 768,
         num_reasoning_steps: int = 3,
         max_thought_len: int = 512,
-        dropout: float = 0.1
+        dropout: float = 0.1,
+        parent_model = None
     ):
         super().__init__()
         
-        self.dim = dim
+        # Extract dim value if ModelConfig is passed
+        dim_value = dim.dim if isinstance(dim, ModelConfig) else dim
+        self.dim = dim_value
         self.num_steps = num_reasoning_steps
         self.max_thought_len = max_thought_len
-        
+        self.model = parent_model
+
         # Thought generation layers
         self.thought_generator = nn.ModuleList([
             nn.TransformerDecoderLayer(
-                d_model=dim,
+                d_model=dim_value,
                 nhead=8,
-                dim_feedforward=dim * 4,
+                dim_feedforward=dim_value * 4,
                 dropout=dropout
             ) for _ in range(num_reasoning_steps)
         ])
         
-        # Context fusion for different modalities
-        self.modality_fusion = nn.ModuleDict({
-            'text': nn.Linear(dim, dim),
-            'image': nn.Linear(dim, dim),
-            'mesh': nn.Linear(dim, dim)
-        })
-        
         # Output projection
-        self.to_logits = nn.Linear(dim, 256) # Project to byte level
+        self.output_proj = nn.Linear(dim_value, dim_value)
         
-        # Learned step embeddings
-        self.step_embeddings = nn.Parameter(
-            torch.randn(num_reasoning_steps, dim)
-        )
-        
-    def forward(
-        self,
-        prompt: torch.Tensor,
-        context: Dict[str, torch.Tensor],
-        temperature: float = 1.0
-    ) -> Tuple[torch.Tensor, List[torch.Tensor]]:
+    def forward(self, hidden_states: torch.Tensor, multimodal_context: Optional[Dict[str, torch.Tensor]] = None):
         """
-        Forward pass generating chain of thought reasoning steps
-        
+        Apply chain-of-thought reasoning to input states
         Args:
-            prompt: [batch_size, seq_len, dim] Input prompt embedding
-            context: Dict of modality tensors (text, image, mesh)
-            temperature: Sampling temperature
-            
-        Returns:
-            final_output: Final reasoning output
-            thought_outputs: List of intermediate reasoning steps
+            hidden_states: Input tensor
+            multimodal_context: Optional dict of multimodal tensors
         """
-        batch_size = prompt.shape[0]
-        device = prompt.device
+        # Store original dimensions
+        batch_size, seq_len, _ = hidden_states.shape
+        x = hidden_states
+        reasoning_steps = []
         
-        # Fuse multimodal context
-        fused_context = []
-        for modality, tensor in context.items():
-            if tensor is not None:
-                fused = self.modality_fusion[modality](tensor)
-                fused_context.append(fused)
+        # Shape verification
+        assert x.shape[0] == batch_size, f"Expected batch size {batch_size}, got {x.shape[0]}"
+        assert x.shape[1] == seq_len, f"Expected seq length {seq_len}, got {x.shape[1]}"
         
-        if fused_context:
-            context_repr = torch.stack(fused_context).mean(0)
-        else:
-            context_repr = torch.zeros_like(prompt)
-            
-        # Initialize reasoning chain
-        curr_thought = prompt
-        thought_outputs = []
-        
-        # Generate reasoning steps
+        # Apply reasoning steps
         for step in range(self.num_steps):
-            # Add step embedding
-            step_embed = self.step_embeddings[step].unsqueeze(0).expand(batch_size, -1, -1)
-            thought_input = curr_thought + step_embed
+            # Generate thought
+            prev_x = x
+            x = self.thought_generator[step](x, x)
             
-            # Generate next thought
-            thought_output = self.thought_generator[step](
-                thought_input,
-                context_repr
-            )
+            # Shape verification after thought generation
+            assert x.shape[0] == batch_size, f"Expected batch size {batch_size}, got {x.shape[0]}"
+            assert x.shape[1] == seq_len, f"Expected seq length {seq_len}, got {x.shape[1]}"
             
-            thought_outputs.append(thought_output)
-            curr_thought = thought_output
+            # Track reasoning step
+            step_info = {
+                'step': step,
+                'thought_vector': x - prev_x,
+                'gate': torch.sigmoid(self.output_proj(x)).mean(),
+                'context_used': bool(multimodal_context)
+            }
+            reasoning_steps.append(step_info)
             
-        # Project final output to byte level
-        final_output = self.to_logits(curr_thought)
+            # Incorporate multimodal context if provided
+            if multimodal_context:
+                for modality, tensor in multimodal_context.items():
+                    # Reshape tensor to match sequence length
+                    if modality == 'image':
+                        # Average over spatial dimensions for images
+                        tensor = tensor.mean(dim=(2, 3))  # [batch, channels]
+                    elif modality == 'mesh':
+                        # Average over vertex dimension for meshes
+                        tensor = tensor.mean(dim=1)  # [batch, features]
+                    
+                    # Project to match hidden dimension
+                    if not hasattr(self, f'{modality}_proj'):
+                        setattr(self, f'{modality}_proj', 
+                               nn.Linear(tensor.size(-1), self.dim).to(tensor.device))
+                    
+                    proj = getattr(self, f'{modality}_proj')
+                    tensor = proj(tensor)  # [batch, dim]
+                    
+                    # Expand to match sequence length
+                    tensor = tensor.unsqueeze(1).expand(batch_size, seq_len, -1)
+                    x = x + tensor
+                    
+                    # Shape verification after adding context
+                    assert x.shape[0] == batch_size, f"Expected batch size {batch_size}, got {x.shape[0]}"
+                    assert x.shape[1] == seq_len, f"Expected seq length {seq_len}, got {x.shape[1]}"
         
-        return final_output, thought_outputs
-        
-    @torch.no_grad()
-    def generate(
-        self,
-        prompt: torch.Tensor,
-        context: Dict[str, torch.Tensor],
-        max_length: int = 1024,
-        temperature: float = 0.7,
-        top_p: float = 0.9
-    ) -> Tuple[torch.Tensor, List[str]]:
-        """
-        Generate complete reasoning chain and final output
-        
-        Args:
-            prompt: Input prompt tensor
-            context: Multimodal context tensors
-            max_length: Maximum generation length
-            temperature: Sampling temperature
-            top_p: Nucleus sampling threshold
+        # Store reasoning steps in model if test time enabled
+        if hasattr(self.model, '_test_time_enabled') and self.model._test_time_enabled:
+            self.model._compute_stats.extend(reasoning_steps)
             
-        Returns:
-            output_bytes: Generated byte sequence
-            thought_chain: List of intermediate reasoning steps
-        """
-        device = prompt.device
-        curr_output = prompt
-        thought_chain = []
+        # Final output projection
+        out = self.output_proj(x)
         
-        for _ in range(max_length):
-            # Forward pass
-            logits, thoughts = self.forward(curr_output, context, temperature)
-            
-            # Sample next byte
-            probs = F.softmax(logits[:, -1] / temperature, dim=-1)
-            sorted_probs, sorted_indices = torch.sort(probs, descending=True)
-            cumsum_probs = torch.cumsum(sorted_probs, dim=-1)
-            sorted_indices_to_remove = cumsum_probs > top_p
-            sorted_indices_to_remove[..., 1:] = sorted_indices_to_remove[..., :-1].clone()
-            sorted_indices_to_remove[..., 0] = 0
-            indices_to_remove = sorted_indices_to_remove.scatter(1, sorted_indices, sorted_indices_to_remove)
-            probs = probs.masked_fill(indices_to_remove, 0.0)
-            next_byte = torch.multinomial(probs, num_samples=1)
-            
-            # Append to output
-            curr_output = torch.cat([curr_output, next_byte.unsqueeze(-1)], dim=1)
-            
-            # Store thought steps
-            if thoughts:
-                thought_chain.extend([t.cpu().numpy() for t in thoughts])
-                
-            # Check for end condition
-            if curr_output.size(1) >= max_length:
-                break
-                
-        return curr_output, thought_chain
-
-class TestTimeCompute:
-    """Handles test-time computation optimization"""
-    
-    def __init__(
-        self,
-        model: ChainOfThought,
-        cache_size: int = 1024,
-        chunk_size: int = 64
-    ):
-        self.model = model
-        self.cache_size = cache_size
-        self.chunk_size = chunk_size
-        self.cache = {}
+        # Final shape verification
+        assert out.shape[0] == batch_size, f"Expected batch size {batch_size}, got {out.shape[0]}"
+        assert out.shape[1] == seq_len, f"Expected seq length {seq_len}, got {out.shape[1]}"
         
-    @torch.no_grad()
-    def compute_with_cache(
-        self,
-        input_ids: torch.Tensor,
-        context: Dict[str, torch.Tensor]
-    ) -> torch.Tensor:
-        """
-        Compute with caching of key-value pairs
-        """
-        # Check cache and compute only on new tokens
-        cache_key = tuple(input_ids.cpu().numpy().flatten())
-        if cache_key in self.cache:
-            return self.cache[cache_key]
-            
-        # Split long sequences into chunks
-        chunks = torch.split(input_ids, self.chunk_size, dim=1)
-        outputs = []
-        
-        for chunk in chunks:
-            output = self.model(chunk, context)
-            outputs.append(output[0])  # Only keep final output, not thoughts
-            
-        final_output = torch.cat(outputs, dim=1)
-        
-        # Update cache
-        if len(self.cache) > self.cache_size:
-            # Remove oldest entries
-            remove_keys = list(self.cache.keys())[:len(self.cache) - self.cache_size]
-            for k in remove_keys:
-                del self.cache[k]
-                
-        self.cache[cache_key] = final_output
-        return final_output
+        return out

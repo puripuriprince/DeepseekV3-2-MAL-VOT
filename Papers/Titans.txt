@@ -5,6 +5,9 @@ Ali Behrouz† , Peilin Zhong† , and Vahab Mirrokni†
 {alibehrouz, peilinz, mirrokni}@google.com
 
 
+Full implementation here https://github.com/lucidrains/titans-pytorch.git
+
+
 Abstract
    Over more than a decade there has been an extensive research effort of how effectively utilize recurrent models and attentions. While recurrent models aim to compress the data into a fixed-size memory (called hidden state), attention allows attending to the entire context window, capturing the direct dependencies of all tokens. This more accurate modeling of dependencies, however, comes with a quadratic cost, limiting the model to a fixed-length context. We present a new neural long-term memory module that learns to memorize historical context and helps an attention to attend to the current context while utilizing long past information. We show that this neural memory has the advantage of a fast parallelizable training while maintaining a fast inference. From a memory perspective, we argue that attention due to its limited context but accurate dependency modeling performs as a short-term memory, while neural memory due to its ability to memorize the data, acts as a long-term, more persistent, memory. Based on these two modules, we introduce a new family of architectures, called Titans, and present three variants to address how one can effectively incorporate memory into this architecture. Our experimental results on language modeling, common-sense reasoning, genomics, and time series tasks show that Titans are more effective than Transformers and recent modern linear recurrent models. They further can effectively scale to larger than 2M context window size with higher accuracy in needle-in-haystack tasks compared to baselines.
 
@@ -292,7 +295,90 @@ acc ?	acc ?	acc_n ?	acc ?	acc ?	acc_n ?	acc ?	acc ?	?
 
 
 
-Transformer++31.5241.0830.7662.9834.7650.5345.2124.0536.8158.2442.92RetNet32.5049.7328.2462.6134.1550.9144.2723.6236.7959.7242.54GLA28.5143.0228.7364.0535.9650.0054.1924.2937.1358.3944.09Mamba30.8340.2129.9463.7935.8849.8249.2424.5635.4160.0743.59DeltaNet28.6547.3028.4363.5235.9549.6352.6825.3737.9658.7944.04TTT27.4434.1930.0663.9735.7150.0853.0126.1137.3259.8344.51Gated DeltaNet27.0130.9434.1163.0838.1251.6055.2826.7734.8959.5445.42
+Transformer++
+31.52
+41.08
+30.76
+62.98
+34.76
+50.53
+45.21
+24.05
+36.81
+58.24
+42.92
+RetNet
+32.50
+49.73
+28.24
+62.61
+34.15
+50.91
+44.27
+23.62
+36.79
+59.72
+42.54
+GLA
+28.51
+43.02
+28.73
+64.05
+35.96
+50.00
+54.19
+24.29
+37.13
+58.39
+44.09
+Mamba
+30.83
+40.21
+29.94
+63.79
+35.88
+49.82
+49.24
+24.56
+35.41
+60.07
+43.59
+DeltaNet
+28.65
+47.30
+28.43
+63.52
+35.95
+49.63
+52.68
+25.37
+37.96
+58.79
+44.04
+TTT
+27.44
+34.19
+30.06
+63.97
+35.71
+50.08
+53.01
+26.11
+37.32
+59.83
+44.51
+Gated DeltaNet
+27.01
+30.94
+34.11
+63.08
+38.12
+51.60
+55.28
+26.77
+34.89
+59.54
+45.42
 Titans (LMM) Titans (MAC)* Titans (MAG)* Titans (MAL)*
 
 
@@ -323,7 +409,8 @@ Transformer++
 RetNet HGRN2 GLA
 Mamba Mamba2 DeltaNet TTT
 Gated DeltaNet Samba*
-Gated DeltaNet-H2*30.63
+Gated DeltaNet-H2*
+30.63
 29.92
 32.33
 27.96
@@ -333,7 +420,8 @@ Gated DeltaNet-H2*30.63
 26.11
 25.47
 25.32
-24.1937.37
+24.19
+37.37
 46.83
 47.14
 36.66
@@ -343,7 +431,8 @@ Gated DeltaNet-H2*30.63
 31.52
 29.24
 29.47
-28.0929.64
+28.09
+29.64
 29.16
 26.12
 27.86
@@ -353,7 +442,8 @@ Gated DeltaNet-H2*30.63
 33.25
 34.40
 36.86
-36.7764.27
+36.77
+64.27
 65.23
 64.52
 65.94
@@ -363,7 +453,8 @@ Gated DeltaNet-H2*30.63
 65.70
 65.94
 66.09
-66.4337.72
+66.43
+37.72
 36.97
 35.45
 37.41
@@ -373,7 +464,8 @@ Gated DeltaNet-H2*30.63
 39.11
 40.46
 39.24
-40.7951.53
+40.79
+51.53
 51.85
 52.24
 49.56
@@ -383,7 +475,8 @@ Gated DeltaNet-H2*30.63
 51.68
 51.46
 51.45
-52.1754.95
+52.17
+54.95
 56.01
 55.97
 56.01
@@ -393,7 +486,8 @@ Gated DeltaNet-H2*30.63
 58.04
 59.80
 60.12
-59.5527.36
+59.55
+27.36
 27.55
 25.51
 26.36
@@ -403,7 +497,8 @@ Gated DeltaNet-H2*30.63
 28.99
 28.58
 27.20
-29.0938.07
+29.09
+38.07
 37.30
 37.35
 38.94
@@ -413,7 +508,8 @@ Gated DeltaNet-H2*30.63
 38.26
 37.43
 38.68
-39.0461.59
+39.04
+61.59
 59.66
 59.02
 59.84
@@ -423,7 +519,8 @@ Gated DeltaNet-H2*30.63
 59.87
 60.03
 58.22
-58.5645.64
+58.56
+45.64
 45.47
 44.52
 45.24
@@ -433,7 +530,7 @@ Gated DeltaNet-H2*30.63
 46.86
 47.26
 47.23
-47.69
+47.69
 Titans (LMM) Titans (MAC)*
 
 65.85
@@ -471,7 +568,8 @@ Titans (MAG)* Titans (MAL)*
 Transformer++
 RetNet Mamba Mamba2 DeltaNet TTT
 Gated DeltaNet Samba*
-Gated DeltaNet-H2*25.21
+Gated DeltaNet-H2*
+25.21
 26.08
 28.12
 22.94
@@ -479,7 +577,8 @@ Gated DeltaNet-H2*25.21
 24.17
 21.18
 20.63
-19.8827.64
+19.88
+27.64
 24.45
 23.96
 28.37
@@ -487,7 +586,8 @@ Gated DeltaNet-H2*25.21
 23.51
 22.09
 22.71
-20.8335.78
+20.83
+35.78
 34.51
 32.80
 33.54
@@ -495,7 +595,8 @@ Gated DeltaNet-H2*25.21
 34.74
 35.54
 39.72
-39.1866.92
+39.18
+66.92
 67.19
 66.04
 67.90
@@ -503,7 +604,8 @@ Gated DeltaNet-H2*25.21
 67.25
 68.01
 69.19
-68.9542.19
+68.95
+42.19
 41.63
 39.15
 42.71
@@ -511,7 +613,8 @@ Gated DeltaNet-H2*25.21
 43.92
 44.95
 47.35
-48.2251.95
+48.22
+51.95
 52.09
 52.38
 49.77
@@ -519,7 +622,8 @@ Gated DeltaNet-H2*25.21
 50.99
 50.73
 52.01
-52.5760.38
+52.57
+60.38
 63.17
 61.49
 63.48
@@ -527,7 +631,8 @@ Gated DeltaNet-H2*25.21
 64.53
 66.87
 66.92
-67.0132.46
+67.01
+32.46
 32.78
 30.34
 31.09
@@ -535,7 +640,8 @@ Gated DeltaNet-H2*25.21
 33.81
 33.09
 33.20
-35.4939.51
+35.49
+39.51
 38.36
 37.96
 40.06
@@ -543,7 +649,8 @@ Gated DeltaNet-H2*25.21
 40.16
 39.21
 38.98
-39.3960.37
+39.39
+60.37
 57.92
 57.62
 58.15
@@ -551,7 +658,8 @@ Gated DeltaNet-H2*25.21
 59.58
 59.14
 61.24
-61.1148.69
+61.11
+48.69
 48.46
 47.22
 48.34
@@ -559,7 +667,7 @@ Gated DeltaNet-H2*25.21
 47.32
 49.69
 51.08
-51.49
+51.49
 
 
 
@@ -619,7 +727,158 @@ Neural Memory	Simba	iTransformer	RLinear	PatchTST	Crossformer	TiDE	TimesNet	DLin
         
 MSE	MAE	MSE  MAE  MSE	MAE	MSE  MAE  MSE  MAE  MSE	MAE	MSE  MAE  MSE  MAE  MSE  MAE
 
-ETTm10.3580.3870.3830.3960.4070.4100.4140.4070.3870.4000.5130.4960.4190.4190.4000.4060.4030.407ETTm20.2610.3090.2710.3270.2880.3320.2860.3270.2810.3260.7570.6100.3580.4040.2910.3330.3500.401ETTh10.4200.4210.4410.4320.4540.4470.4460.4340.4690.4540.5290.5220.5410.5070.4580.4500.4560.452ETTh20.3360.3820.3610.3910.3830.4070.3740.3980.3870.4070.9420.6840.6110.5500.4140.4270.5590.515ECL0.1620.2610.1690.2740.1780.2700.2190.2980.2050.2900.2440.3340.2510.3440.1920.2950.2120.300Traffic0.4930.2910.428 0.282 0.6260.3780.4810.3040.5500.3040.7600.4730.6200.3360.6250.383 0.415 0.289Weather 0.231   0.265 0.2550.2800.2580.2780.2720.2910.2590.2810.2590.3150.2710.3200.2590.2870.2650.317
+ETTm1
+0.358
+0.387
+0.383
+0.396
+0.407
+0.410
+0.414
+0.407
+0.387
+0.400
+0.513
+0.496
+0.419
+0.419
+0.400
+0.406
+0.403
+0.407
+ETTm2
+0.261
+0.309
+0.271
+0.327
+0.288
+0.332
+0.286
+0.327
+0.281
+0.326
+0.757
+0.610
+0.358
+0.404
+0.291
+0.333
+0.350
+0.401
+ETTh1
+0.420
+0.421
+0.441
+0.432
+0.454
+0.447
+0.446
+0.434
+0.469
+0.454
+0.529
+0.522
+0.541
+0.507
+0.458
+0.450
+0.456
+0.452
+ETTh2
+0.336
+0.382
+0.361
+0.391
+0.383
+0.407
+0.374
+0.398
+0.387
+0.407
+0.942
+0.684
+0.611
+0.550
+0.414
+0.427
+0.559
+0.515
+ECL
+0.162
+0.261
+0.169
+0.274
+0.178
+0.270
+0.219
+0.298
+0.205
+0.290
+0.244
+0.334
+0.251
+0.344
+0.192
+0.295
+0.212
+0.300
+Traffic
+
+
+0.493
+0.291
+0.428
+ 0.282 
+0.626
+0.378
+0.481
+0.304
+0.550
+0.304
+0.760
+0.473
+0.620
+0.336
+0.625
+0.383
+
+ 0.415 
+0.289
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Weather
+ 0.231 
+  0.265 
+0.255
+0.280
+0.258
+0.278
+0.272
+0.291
+0.259
+0.281
+0.259
+0.315
+0.271
+0.320
+0.259
+0.287
+0.265
+0.317
 
 augmenting Llama3.1-8B model with RAG performs worse than Titans with about ×70 less parameters.
 5.5 The Effect of Deep Memory
@@ -639,7 +898,60 @@ Combining neural memory with attention as we do in Titans variants, can addition
 
 Table 4: Downstream evaluation of pre-trained DNA models on GenomicsBenchmarks (Grešová et al. 2023). We report top-1 classification accuracy (%).
 
-ModelEnhancer CohnEnhancer EnsHuman Reg.Non-TATA PromotersHuman OCR Ens.CNN69.568.993.384.668.0DNABERT74.085.788.185.675.1GPT70.583.591.587.773.0HyenaDNA74.289.293.896.680.9Transformer++73.489.589.994.479.5Mamba73.0--96.6-Based74.689.589.596.879.0Neural Memory Module75.289.689.396.679.9
+Model
+Enhancer Cohn
+Enhancer Ens
+Human Reg.
+Non-TATA Promoters
+Human OCR Ens.
+CNN
+69.5
+68.9
+93.3
+84.6
+68.0
+DNABERT
+74.0
+85.7
+88.1
+85.6
+75.1
+GPT
+70.5
+83.5
+91.5
+87.7
+73.0
+HyenaDNA
+74.2
+89.2
+93.8
+96.6
+80.9
+Transformer++
+73.4
+89.5
+89.9
+94.4
+79.5
+Mamba
+73.0
+-
+-
+96.6
+-
+Based
+74.6
+89.5
+89.5
+96.8
+79.0
+Neural Memory Module
+75.2
+89.6
+89.3
+96.6
+79.9
 replace its Mamba module with our neural memory. We report the results on common time series forecasting benchmark datasets-ETT, ECL, Traffic, and Weather (H. Zhou et al. 2021). The results are reported in Table 3. Our neural memory module is outperforming all baselines, including Mamba-based, linear-based, and Transformer-based architectures.
 5.7 DNA Modeling
 In order to understand the capability of Titans beyond natural language, we further evaluate the performance of our neural memory module on DNA modeling tasks. To this end, we evaluate pre-trained models on the downstream tasks in GenomicsBenchmarks (Grešová et al. 2023). We follow the same experimental setups from Nguyen et al. (2024), and re-use the reported results of baselines by Arora et al. (2024). The performance of Titans (LMM) and baselines are reported in Table 4. We find that LMM is competitive with state-of-the-art architectures across different downstream genomics tasks.

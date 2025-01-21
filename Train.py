@@ -102,19 +102,46 @@ class Trainer:
         batch: Dict[str, torch.Tensor],
         base_model: Optional[TransformerSquared] = None
     ) -> Dict[str, float]:
+        """
+        Single training step with performance monitoring and error handling
+        
+        Args:
+            batch: Input batch
+            base_model: Optional teacher model for distillation
+            
+        Returns:
+            Dict of metrics
+        """
         """Single training step with chain of thought reasoning"""
-        self.model.train()
-        self.optimizer.zero_grad()
+        logger.debug("Starting training step")
+        start_time = torch.cuda.Event(enable_timing=True)
+        end_time = torch.cuda.Event(enable_timing=True)
         
-        # Enable test-time compute for reasoning analysis
-        self.model.enable_test_time()
-        
-        # Get inputs and targets
-        input_ids = batch["input_ids"].to(self.device)
-        target_ids = batch["target_ids"].to(self.device)
-        
-        # First pass - task identification with reasoning
-        first_pass_output, _ = self.model(input_ids)
+        try:
+            self.model.train()
+            self.optimizer.zero_grad()
+            
+            # Enable test-time compute for reasoning analysis
+            self.model.enable_test_time()
+            
+            # Track memory usage
+            if torch.cuda.is_available():
+                start_mem = torch.cuda.memory_allocated()
+                
+            # Get inputs and targets
+            input_ids = batch["input_ids"].to(self.device)
+            target_ids = batch["target_ids"].to(self.device)
+            
+            logger.debug(f"Input shape: {input_ids.shape}, Target shape: {target_ids.shape}")
+            
+            start_time.record()
+            
+            # First pass - task identification with reasoning
+            first_pass_output, stats = self.model(input_ids)
+            
+            # Log performance stats
+            if stats:
+                logger.debug(f"First pass stats: {stats}")
         
         # Get reasoning statistics
         stats = self.model.get_compute_stats()
@@ -158,13 +185,31 @@ class Trainer:
         # Disable test-time compute
         self.model.disable_test_time()
         
-        return {
+        end_time.record()
+        torch.cuda.synchronize()
+        
+        # Calculate memory usage
+        if torch.cuda.is_available():
+            end_mem = torch.cuda.memory_allocated()
+            mem_diff = end_mem - start_mem
+            logger.debug(f"Memory usage for step: {mem_diff / 1024**2:.2f}MB")
+        
+        # Log timing
+        step_time = start_time.elapsed_time(end_time)
+        logger.debug(f"Step time: {step_time:.2f}ms")
+        
+        metrics = {
             "loss": loss.item(),
             "reinforce_loss": reinforce_loss.item(),
             "kl_loss": kl_loss.item() if base_model else 0,
             "mean_gate_value": np.mean(reasoning_analysis['gate_values']),
-            "mean_impact": np.mean(reasoning_analysis['step_impacts'])
+            "mean_impact": np.mean(reasoning_analysis['step_impacts']),
+            "step_time_ms": step_time,
+            "memory_mb": mem_diff / 1024**2 if torch.cuda.is_available() else 0
         }
+        
+        logger.debug(f"Step metrics: {metrics}")
+        return metrics
     
     def train(
         self,
@@ -655,23 +700,3 @@ if __name__ == "__main__":
             temperature=config['temperature'],
             alpha=config['alpha']
         )
-        
-        # Create dataloaders
-        from data.multimodal_dataset import create_dataloaders
-        
-        train_dataloader, val_dataloader = create_dataloaders(
-            laion_path=config['laion_path'],
-            c4_path=config['c4_path'],
-            batch_size=config['batch_size'],
-            num_workers=config['num_workers'],
-            image_size=config['image_size'],
-            max_text_length=config['max_sequence_length']
-        )
-        
-        if train_dataloader is not None and val_dataloader is not None:
-            trainer.train(
-                train_dataloader=train_dataloader,
-                val_dataloader=val_dataloader,
-                num_epochs=config['num_epochs'],
-                save_dir=config['checkpoint_dir']
-            )

@@ -29,40 +29,31 @@ class ModelChat:
         with open(config_path, 'r') as f:
             raw_config = json.load(f)
             
-        # Map config keys to match TransformerSquared parameters
+        # Map config keys to match SushiHybrid parameters
         self.config = {
             'dim': raw_config.get('dim', 768),
-            'num_layers': raw_config.get('num_layers', 12),
+            'num_layers': raw_config.get('num_layers', 64),
             'num_heads': raw_config.get('heads', 12),
-            'num_experts': raw_config.get('num_experts', 3),
+            'num_experts': raw_config.get('num_experts', 24),
             'mlp_ratio': raw_config.get('mlp_ratio', 4),
             'dropout': raw_config.get('dropout', 0.1),
-            'max_sequence_length': raw_config.get('max_sequence_length', 2048),
-            'image_size': raw_config.get('image_size', 256),
-            'patch_size': raw_config.get('patch_size', 16),
-            'memory_size': raw_config.get('memory_size', 256),
+            'max_sequence_length': raw_config.get('max_sequence_length', 8192),
+            'memory_size': raw_config.get('memory_size', 512),
             'chunk_size': raw_config.get('chunk_size', 64),
-            'num_reasoning_steps': raw_config.get('num_reasoning_steps', 3),
-            'segment_len': raw_config.get('segment_len', 128),
-            'num_persist_mem_tokens': raw_config.get('num_persist_mem_tokens', 4),
-            'num_longterm_mem_tokens': raw_config.get('num_longterm_mem_tokens', 8),
+            'local_window': raw_config.get('local_window', 128),
             'use_gradient_checkpointing': raw_config.get('use_gradient_checkpointing', False)
         }
         
         try:
-            # Initialize model and processor
+            # Initialize model and tokenizer
             logger.info("Initializing model...")
-            self.model = TransformerSquared(**self.config)
+            from Sushi_model.sushiFull import SushiHybrid
+            self.model = SushiHybrid(**self.config)
             self.device = device
             self.test_mode = test_mode
             
-            # Choose appropriate processor
-            if test_mode:
-                logger.info("Using test processor...")
-                self.processor = TestProcessor(device=device)
-            else:
-                logger.info("Using byte level tokenizer...")
-                self.tokenizer = ByteLevelTokenizer()
+            # The tokenizer is built into SushiHybrid
+            self.tokenizer = self.model.tokenizer
             
             # Load model weights if available
             if os.path.exists(model_path) and model_path.endswith('.pt'):
@@ -93,8 +84,11 @@ class ModelChat:
             self.model = self.model.to(device)
             self.model.eval()
             
-            # Initialize conversation history
+            # Initialize conversation history and memory states
             self.conversation_history = []
+            self.memory_states = None
+            self.expert_weights = None
+            self.z_vectors = None
             
         except Exception as e:
             logger.error(f"Failed to initialize model: {str(e)}")
@@ -131,142 +125,58 @@ class ModelChat:
     def process_response(self, input_text: str) -> Tuple[str, Dict, List[float]]:
         """Process user input and generate response with reasoning steps"""
         try:
-            # Process input based on mode
-            try:
-                if self.test_mode:
-                    logger.info("Using test processor for input...")
-                    inputs = self.processor.encode_single(input_text)
-                    input_ids = inputs['input_ids']
-                    # Validate input dimensions
-                    if input_ids.dim() == 1:
-                        input_ids = input_ids.unsqueeze(0)
-                    logger.info(f"Input shape: {input_ids.shape}, device: {input_ids.device}")
-                else:
-                    logger.info("Using byte tokenizer for input...")
-                    input_bytes = input_text.encode('utf-8')
-                    input_ids = torch.tensor([[b for b in input_bytes]], dtype=torch.long)
-                    logger.info(f"Input shape: {input_ids.shape}")
-                
-                # Ensure input is on correct device
-                input_ids = input_ids.to(self.device)
-                
-            except Exception as e:
-                logger.error(f"Error during input processing: {str(e)}")
-                raise
+            # Convert input text to bytes
+            input_bytes = input_text.encode('utf-8')
+            input_ids = torch.tensor([[b for b in input_bytes]], dtype=torch.long).to(self.device)
             
-            # Generate response with reasoning
+            # Generate response with all features
             with torch.no_grad():
                 try:
-                    logger.info("Enabling test time mode...")
-                    self.model.enable_test_time()
+                    outputs = self.model(
+                        input_ids=input_ids,
+                        expert_weights=self.expert_weights,
+                        z_vectors=self.z_vectors,
+                        use_memory=True
+                    )
                     
-                    # First pass to get reasoning
-                    logger.info("Running first pass for reasoning...")
-                    logger.info(f"Model device: {next(self.model.parameters()).device}")
+                    # Update memory states for next interaction
+                    self.memory_states = outputs['memory_states']
+                    self.expert_weights = outputs['expert_weights']
                     
-                    try:
-                        # Try CUDA first
-                        first_pass = self.model(
-                            input_ids,
-                            input_type='text' if self.test_mode else 'bytes',
-                            output_type='text'
-                        )
-                    except RuntimeError as e:
-                        if "CUDA" in str(e):
-                            logger.warning("CUDA error encountered, falling back to CPU")
-                            # Move model and inputs to CPU
-                            self.model = self.model.cpu()
-                            input_ids = input_ids.cpu()
-                            self.device = "cpu"
-                            first_pass = self.model(
-                                input_ids,
-                                input_type='text' if self.test_mode else 'bytes',
-                                output_type='text'
-                            )
-                        else:
-                            raise
+                    # Convert byte logits to text
+                    byte_logits = outputs['byte_logits']
+                    output_bytes = byte_logits.argmax(dim=-1)
+                    response = bytes([b.item() for b in output_bytes[0]]).decode('utf-8', errors='replace')
                     
-                    logger.info("First pass completed successfully")
-                    
-                    # Get reasoning statistics with safety checks
-                    logger.info("Getting compute stats...")
-                    stats = self.model.get_compute_stats()
-                    logger.info(f"Compute stats: {stats}")
-                    
+                    # Extract reasoning information
                     reasoning_stats = {
                         'gate_values': [],
                         'step_impacts': []
                     }
                     
-                    if 'reasoning_steps' in stats:
-                        logger.info(f"Found {len(stats['reasoning_steps'])} reasoning steps")
-                        if len(stats['reasoning_steps']) > 0:
-                            last_step = stats['reasoning_steps'][0]
-                            logger.info(f"Last step content: {last_step}")
-                            if isinstance(last_step, dict):
-                                reasoning_stats['gate_values'] = last_step.get('gate_values', [0.0])
-                                reasoning_stats['step_impacts'] = last_step.get('step_impacts', [0.0])
-                                logger.info(f"Extracted gate values: {reasoning_stats['gate_values']}")
-                                logger.info(f"Extracted step impacts: {reasoning_stats['step_impacts']}")
-                    else:
-                        logger.warning("No reasoning_steps found in compute stats")
-                    
-                    # Get expert weights from first pass
-                    try:
-                        expert_weights = first_pass.get('expert_weights', 
-                            torch.ones(self.config['num_experts']).to(self.device) / self.config['num_experts']
-                        )
-                        logger.info(f"Expert weights shape: {expert_weights.shape}")
-                    except Exception as e:
-                        logger.error(f"Error getting expert weights: {str(e)}")
-                        expert_weights = torch.ones(self.config['num_experts']).to(self.device) / self.config['num_experts']
-                    
-                    # Generate final output
-                    logger.info("Generating final output...")
-                    outputs = self.model(
-                        input_ids,
-                        input_type='text' if self.test_mode else 'bytes',
-                        output_type='text',
-                        expert_weights=expert_weights
-                    )
-                    logger.info("Final output generated successfully")
-                    
-                    # Decode output based on mode
-                    try:
-                        if 'text' in outputs:
-                            if self.test_mode:
-                                logger.info("Decoding with test processor...")
-                                response = self.processor.decode(outputs['text'][0])
-                            else:
-                                logger.info("Decoding with byte tokenizer...")
-                                logits = outputs['text'][0]
-                                output_bytes = logits.argmax(dim=-1)
-                                response = bytes([b.item() for b in output_bytes]).decode('utf-8', errors='replace')
-                            
-                            if not response.strip():
-                                response = "[No coherent text generated]"
-                        else:
-                            logger.warning("No text output in model response")
-                            response = "[No text output available]"
+                    # Process attention maps for reasoning steps
+                    for attn_map, diff_map in zip(
+                        outputs['attention_maps'],
+                        outputs['diff_attention_maps']
+                    ):
+                        # Calculate impact from attention and differential attention
+                        gate_value = attn_map.mean().item()
+                        step_impact = diff_map.mean().item()
                         
-                        expert_weights = expert_weights.mean(dim=0).tolist()
-                        
-                    except Exception as e:
-                        logger.error(f"Error during output decoding: {str(e)}")
-                        raise
-                        
+                        reasoning_stats['gate_values'].append(gate_value)
+                        reasoning_stats['step_impacts'].append(step_impact)
+                    
+                    # Get expert weights for visualization
+                    expert_weights = outputs['expert_weights'][0].tolist()
+                    
+                    return response, reasoning_stats, expert_weights
+                    
                 except Exception as e:
                     logger.error(f"Error during model inference: {str(e)}")
                     raise
                     
-                finally:
-                    # Always disable test time mode
-                    self.model.disable_test_time()
-                    
-            return response, reasoning_stats, expert_weights
-            
         except Exception as e:
-            logger.error(f"Error in process_response: {str(e)}\nTraceback:", exc_info=True)
+            logger.error(f"Error in process_response: {str(e)}")
             return "[Error processing response]", {'gate_values': [], 'step_impacts': []}, []
     
     def display_response(

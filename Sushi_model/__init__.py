@@ -1,11 +1,12 @@
-from .transformer_squared import TransformerSquared
 from .byte_latent_patches import ByteLatentPatches, ByteLevelTokenizer
-from .diff_attention import DifferentialAttention
-#from .titan_memory import TitanMemoryLayer
+from .sushiFull import SushiFull
+from .transformer_squared import TransformerSquared
+from .diff_attention import MultiHeadDifferentialAttention
 
 __all__ = [
-    'TransformerSquared',
     'ByteLatentPatches',
     'ByteLevelTokenizer',
-    'DifferentialAttention'
-] 
+    'SushiFull',
+    'TransformerSquared',
+    'MultiHeadDifferentialAttention'
+]

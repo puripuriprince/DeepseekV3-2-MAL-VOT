@@ -3,6 +3,43 @@ Tianzhu Ye* †‡	Li Dong*†	Yuqing Xia*†	Yutao Sun*†‡ Yi Zhu†	Gao Huang‡	Furu Wei†?
 † Microsoft Research	‡ Tsinghua University https://aka.ms/GeneralAI
 Abstract
 
+
+
+DifferentialAttention implementation here https://github.com/microsoft/unilm/tree/master/Diff-Transformer.git
+
+
+
+
+core code for diff attention self.lambda_q1 = nn.Parameter(torch. zeros(self.head dim, dtype=torch.float32).normal_(mean=0,std=0.1)) self.lambda_k1 = nn. Parameter(torch. zeros(self.head dim, dtype=torch.float32).normaUmean=0,std=0.1)) self.lambda_q2 = nn.Parameter(torch. zeros(self.head dim, dtype=torch.float32).normaUmean=0,std=0.1)) self.lambda_k2 = nn.Parameter(torch. zeros(self.head dim, dtype=torch.float32).normaUmean=0,std=0.1))
+self.subln = RMSNorm(2 * self.head_dim, eps=le-5, elementwise affine=True) 
+ 
+A Setup
+Shared across heads
+GroupNorm setup
+ 
+
+def lambda init fn(depth):
+return 0.8 - 0.6 * math.exp(-0.3 * depth)
+I			? Recommended Ainit
+		
+
+attn weights = F.softmax(attn_weights, dim=-1, dtype=torch.float32).type_as( attn weights
+ 
+
+ 
+lambda _1 = torch.exp(torch.sum(self.lambda_q1 * self.lambda k1, dim=-1).float()).type_as(q) lambda _2 = torch.exp(torch.sum(self.lambda_q2 * self.lambda k2, dim=-1).float()).type_as(q) lambda full = lambda 1 - lambda 2 + self.lambda init
+attn weights = attn weights.view(bsz, self.num_heads, 2, tgt_len, src len) attn weights = attn weights[:,	0] - lambda full * attn weights[:,	1] :
+attn = torch.matmul(attn weights, v)
+attn = self.subln(attn)
+attn = attn * (1 - self.lambda init)
+I	
+attn = attn.transpose(1, 2).reshape(bsz, tgt_len, self.num_heads * 2 * self.head_dim)
+
+
+
+Flex attention here https://github.com/pytorch-labs/attention-gym.git
+
+
 Transformer tends to overallocate attention to irrelevant context. In this work, we introduce DIFF Transformer, which amplifies attention to the relevant context while canceling noise. Specifically, the differential attention mechanism calculates attention scores as the difference between two separate softmax attention maps. The subtraction cancels noise, promoting the emergence of sparse attention pat- terns. Experimental results on language modeling show that DIFF Transformer outperforms Transformer in various settings of scaling up model size and training tokens. More intriguingly, it offers notable advantages in practical applications, such as long-context modeling, key information retrieval, hallucination mitigation, in-context learning, and reduction of activation outliers. By being less distracted by irrelevant context, DIFF Transformer can mitigate hallucination in question answering and text summarization. For in-context learning, DIFF Transformer not only enhances accuracy but is also more robust to order permutation, which was considered as a chronic robustness issue. The results position DIFF Transformer as a highly effective and promising architecture to advance large language models.
 
 1 Introduction
@@ -112,7 +149,61 @@ Setup We follow a similar recipe as StableLM-3B-4E1T [40]. We set hidden size to
 Results Table 1 reports the zero-shot results on the LM Eval Harness benchmark [12]. We compare DIFF Transformer with well-trained Transformer-based language models, including OpenLLaMA-v2- 3B [13], StableLM-base-alpha-3B-v2 [39], and StableLM-3B-4E1T [40]. OpenLLaMA-v2-3B and StableLM-base-alpha-3B-v2 are also trained with 1T tokens. The 1T results of StableLM-3B-4E1T are taken from its technical report [40]. Experimental results show that DIFF Transformer achieves favorable performance compared to previous well-tuned Transformer language models. In addition, Appendix B shows that DIFF Transformer outperforms Transformer across various tasks, where we use the same setting to train the 3B-size language models for fair comparisons.
 
 
-ModelARC-CARC-EBoolQHellaSwagOBQAPIQAWinoGrandeAvgTraining with 1T tokensOpenLLaMA-3B-v2 [13]33.967.665.770.026.076.762.957.5StableLM-base-alpha-3B-v2 [39]32.467.364.668.626.476.062.156.8StableLM-3B-4E1T [40]-66.6---76.863.2-DIFF-3B37.872.969.071.429.076.867.160.6Table 1: Eval Harness [12] accuracy compared with well-trained Transformer language models [40, 39, 13]. We scale the 3B model to 1 trillion training tokens. The 1T results of StableLM-3B-4E1T are taken from its technical report [40].
+Model
+ARC-C
+ARC-E
+BoolQ
+HellaSwag
+OBQA
+PIQA
+WinoGrande
+Avg
+Training with 1T tokens
+
+
+
+
+
+
+
+
+OpenLLaMA-3B-v2 [13]
+33.9
+67.6
+65.7
+70.0
+26.0
+76.7
+62.9
+57.5
+StableLM-base-alpha-3B-v2 [39]
+32.4
+67.3
+64.6
+68.6
+26.4
+76.0
+62.1
+56.8
+StableLM-3B-4E1T [40]
+-
+66.6
+-
+-
+-
+76.8
+63.2
+-
+DIFF-3B
+37.8
+72.9
+69.0
+71.4
+29.0
+76.8
+67.1
+60.6
+Table 1: Eval Harness [12] accuracy compared with well-trained Transformer language models [40, 39, 13]. We scale the 3B model to 1 trillion training tokens. The 1T results of StableLM-3B-4E1T are taken from its technical report [40].
 
 
 
@@ -264,7 +355,28 @@ Attention Score Analysis Table 3 presents the attention scores allocated to the 
 
 
 
-Transformer0.030.030.030.070.090.510.540.520.490.49DIFF0.270.300.310.320.400.010.020.020.020.01
+Transformer
+0.03
+0.03
+0.03
+0.07
+0.09
+0.51
+0.54
+0.52
+0.49
+0.49
+DIFF
+0.27
+0.30
+0.31
+0.32
+0.40
+0.01
+0.02
+0.02
+0.02
+0.01
 Table 3: Attention scores allocated to answer spans and noise context in the key information retrieval task. The target answer is inserted in varying positions (i.e., depth) of context. DIFF Transformer allocates more attention scores to useful information and effectively cancels out attention noise.
 
 3.5 In-Context Learning
@@ -385,7 +497,47 @@ DIFF	0.39	0.46	0.36
 Table 4: Evaluation of contextual hallucination on text summarization and question answering. Higher accuracy indicates less hallucination. We follow Chuang et al. [6] to employ GPT-4o to make binary judgments, which has relatively high agreement with human annotation.
 
 
-ModelActivation TypeTop-1Top-2Top-3Top-10Top-100MedianTransformerAttention Logits318.0308.2304.9284.7251.55.4DIFFAttention Logits38.838.837.332.027.43.3TransformerHidden States3608.63607.43603.63552.12448.20.6DIFFHidden States1688.21672.51672.11624.3740.91.2Table 5: Largest activation values in attention logits and hidden states. Top activation values are considered as activation outliers, due to their significantly higher magnitude than the median. DIFF Transformer mitigates outliers compared to Transformer.
+Model
+Activation Type
+Top-1
+Top-2
+Top-3
+Top-10
+Top-100
+Median
+Transformer
+Attention Logits
+318.0
+308.2
+304.9
+284.7
+251.5
+5.4
+DIFF
+Attention Logits
+38.8
+38.8
+37.3
+32.0
+27.4
+3.3
+Transformer
+Hidden States
+3608.6
+3607.4
+3603.6
+3552.1
+2448.2
+0.6
+DIFF
+Hidden States
+1688.2
+1672.5
+1672.1
+1624.3
+740.9
+1.2
+Table 5: Largest activation values in attention logits and hidden states. Top activation values are considered as activation outliers, due to their significantly higher magnitude than the median. DIFF Transformer mitigates outliers compared to Transformer.
 
 
 Question Answering As shown in Table 4b, we compare the hallucination rate of DIFF Transformer and Transformer on both single- and multi-document question answering. The Qasper [9] dataset is single-document question answering. In contrast, HotpotQA [45] and 2WikiMultihopQA [14] are multi-document question answering. The goal is to answer questions about the given context. All evaluation examples are from LongBench [2].
@@ -422,15 +574,52 @@ Figure 8: Zero-shot accuracy on the Hel- laSwag [12] dataset. We quantize the at
 
 
 
-Transformer16128	?3.0870.8983.272Transformer8256	?3.0880.8993.273+ GroupNorm8256	?3.0860.8993.271
-DIFF Transformer8128?3.0620.8803.247- GroupNorm
-with ?init = 0.88
-8128
-128?
-?3.122
-3.0650.911
-0.8833.309
-3.250with ?init = 0.58128?3.0660.8823.251
+Transformer
+16
+128	?
+3.087
+0.898
+3.272
+Transformer
+8
+256	?
+3.088
+0.899
+3.273
++ GroupNorm
+8
+256	?
+3.086
+0.899
+3.271
+DIFF Transformer
+8
+128
+?
+3.062
+0.880
+3.247
+- GroupNorm
+with ?init = 0.8
+8
+8
+128
+128
+?
+?
+3.122
+3.065
+0.911
+0.883
+3.309
+3.250
+with ?init = 0.5
+8
+128
+?
+3.066
+0.882
+3.251
 Table 6: Ablation studies of 1.4B-size models. We report language modeling loss on the validation set. We also follow Arora et al. [1] to report fine-grained metrics, where "AR-Hit" evaluates n-grams previously seen in the context. "#Heads" is number of heads. "d" is head dimension. "GN" indicates whether GroupNorm is used.
 
 3.8 Ablation Studies
@@ -567,29 +756,95 @@ Table 8 reports the zero-shot and 5-shot results on the LM Eval Harness benchmar
 Model	ARC-C	ARC-E	BoolQ	HellaSwag	OBQA	PIQA	WinoGrande	Avg
 
 Training with 350B tokens (Zero-Shot)
-Transformer-3B	32.2	66.862.963.426.274.561.655.4DIFF-3B	33.0	68.360.166.227.675.562.756.2Training with 350B tokens (5-Shot)
-Transformer-3B	34.0	69.5
-65.3
-63.4
-25.0
-75.2
-62.6
-56.4DIFF-3B	35.0	69.567.266.927.676.163.858.0Table 8: Comparison of DIFF Transformer with well-trained Transformer language models on LM Eval Harness [12]. DIFF Transformer achieves better accuracy in the zero- and few-shot settings.
+Transformer-3B	32.2	66.8
+62.9
+63.4
+26.2
+74.5
+61.6
+55.4
+DIFF-3B	33.0	68.3
+60.1
+66.2
+27.6
+75.5
+62.7
+56.2
+Training with 350B tokens (5-Shot)
+Transformer-3B	34.0	69.5
+65.3
+63.4
+25.0
+75.2
+62.6
+56.4
+DIFF-3B	35.0	69.5
+67.2
+66.9
+27.6
+76.1
+63.8
+58.0
+Table 8: Comparison of DIFF Transformer with well-trained Transformer language models on LM Eval Harness [12]. DIFF Transformer achieves better accuracy in the zero- and few-shot settings.
 
 C Hyperparameters for Section 3.1
 Table 9 presents the detailed hyperparameters for the DIFF Transformer-3B models in Section 3.1. For Transformer-3B, the only difference is that there are 24 heads. Notice that both Transformer-3B and DIFF Transformer-3B have similar FLOPs.
 
-ParamsValuesLayers28Hidden size3072FFN size8192Vocab size100,288Heads12Adam ß(0.9, 0.95)LR
-Batch size-4
+Params
+Values
+Layers
+28
+Hidden size
+3072
+FFN size
+8192
+Vocab size
+100,288
+Heads
+12
+Adam ß
+(0.9, 0.95)
+LR
+Batch size
+-4
 3.2 × 10
-4MWarmup steps1000Weight decay0.1Dropout0.0
+4M
+Warmup steps
+1000
+Weight decay
+0.1
+Dropout
+0.0
 Table 9: Hyperparamters used for the DIFF Transformer-3B model in Section 3.1.
 
 
 D Hyperparameters for Section 3.2
 Table 10 reports the hidden dimension, number of layers, and number of heads of DIFF Transformer for different model sizes. For all model sizes of Transformer, we double the number of heads compared with DIFF Transformer to align parameters. The FFN size is 8 dmodel, where dmodel is the hidden dimension. The training length is set to 2048. The batch size is set to 0.25M tokens. We use AdamW [24] with ß1 = 0.9, ß2 = 0.98. The learning rate is 1.5 10-4 for 830M to 2.8B sizes, and 7.5 10-5 for 6.8B to 13.1B sizes. The warmup step is 375 with linear rate decay. The weight decay is set to 0.05. We train the models with 40k steps, i.e., 10B tokens.
 
-SizeHidden Dim.#Layers#Heads830M15362481.4B20482482.8B256032106.8B4096321613.1B51204020
+Size
+Hidden Dim.
+#Layers
+#Heads
+830M
+1536
+24
+8
+1.4B
+2048
+24
+8
+2.8B
+2560
+32
+10
+6.8B
+4096
+32
+16
+13.1B
+5120
+40
+20
 Table 10: Model size and hyperparameters used for DIFF Transformer in Section 3.2.
 
 E Robustness of In-Context Learning

@@ -5,6 +5,8 @@ qisun,edo,yujintang @sakana.ai
 Equal contribution
 
 
+FULL CODE IMLEMENTATION HERE https://github.com/SakanaAI/self-adaptive-llms.git
+
 ABSTRACT
 
 Self-adaptive large language models (LLMs) aim to solve the challenges posed by traditional fine-tuning methods, which are often computationally intensive and static in their ability to handle diverse tasks. We introduce Transformer2, a novel self-adaptation framework that adapts LLMs for unseen tasks in real-time by se- lectively adjusting only the singular components of their weight matrices. During inference, Transformer2 employs a two-pass mechanism: first, a dispatch system identifies the task properties, and then task-specific "expert" vectors, trained using reinforcement learning, are dynamically mixed to obtain targeted behavior for the incoming prompt. Our method outperforms ubiquitous approaches such as LoRA, with fewer parameters and greater efficiency. Transformer2 demonstrates versatil- ity across different LLM architectures and modalities, including vision-language tasks. Transformer2 represents a significant leap forward, offering a scalable, ef- ficient solution for enhancing the adaptability and task-specific performance of LLMs, paving the way for truly dynamic, self-organizing AI systems. Our code is available at https://github.com/SakanaAI/self-adaptive-llms
@@ -48,11 +50,11 @@ To overcome these limitations, we first propose Singular Value Fine-tuning (SVF)
 We then introduce our full Transformer2 framework to empower LLMs through the underlying prin- ciples of self-adaptation. Given a prompt from an unknown task, Transformer2 entails a two-pass inference mechanism which we illustrate in Figure 1. During the first pass, Transformer2 executes the model and observes its test-time behavior, gathering the relevant information to understand the necessary skills to tackle the current problem. During the second pass, our framework uses this infor- mation to combine the available expert vectors and provide a new modification to the base weights of the LLM specifically tailored to its test-time conditions. We design three different adaptation strategies that can be used within Transformer2, which we show provide monotonic performance benefits with increasing access to the test-time conditions.
 We evaluate SVF and the full Transformer2 framework through extensive experiments across a di- verse range of LLMs and tasks. First, when trained on domain-specific datasets, we show that SVF consistently outperforms traditional strategies for efficient fine-tuning such as LoRA, and at the same time, with orders of magnitudes fewer parameters. Then we show that Transformer2 is able to push performance far further, effectively adapting the weights of the base model even in entirely out-of-distribution applications such as visual question answering. Finally, we analyze the proper- ties of our new framework, validating that it provides increasing benefits with additional access to its current test-time conditions and even allow for recycling pre-trained SVF experts across model architectures. In summary, our key technical contributions are the following:
 
-• The development of Transformer2 as a pivotal self-adaptation framework for LLMs, pro- viding a universal blueprint to dynamically adapt the behavior of LLMs from a growing set of pre-trained skills.
+  The development of Transformer2 as a pivotal self-adaptation framework for LLMs, pro- viding a universal blueprint to dynamically adapt the behavior of LLMs from a growing set of pre-trained skills.
 
-• The introduction of SVF, a novel PEFT method trainable with RL on small datasets, pro- ducing compact expert vectors with inherent compositionality, all key properties necessary for our scalable self-adaptation framework.
+  The introduction of SVF, a novel PEFT method trainable with RL on small datasets, pro- ducing compact expert vectors with inherent compositionality, all key properties necessary for our scalable self-adaptation framework.
 
-• The implementation of three adaptation strategies within Transformer2, effectively dis- patching SVF-trained experts with properties designed to cope with different requirements and deployment scenarios.
+  The implementation of three adaptation strategies within Transformer2, effectively dis- patching SVF-trained experts with properties designed to cope with different requirements and deployment scenarios.
 
 2 RELATED WORKS
 Self-adaptive LLMs We define self-adaptive LLMs as a group of LLMs or a standalone LLM that can evaluate and modify its behavior in response to changes in its operating environment or internal state, without external intervention. This adaptation can be explored from two perspectives: a macroview, where multiple LLMs collaborate and/or compete, and a microview, where internal adaptations allow a single LLM to specialize in different tasks.
@@ -63,7 +65,7 @@ SVD for LLM Fine-tuning SVD is increasingly being used as an inductive bias for 
 
 3 METHODS
 3.1 PRELIMINARIES
-Singular value decomposition (SVD) offers a fundamental view of matrix multiplications. In the context of neural networks, each weight matrix W  Rn×m can be decomposed into three compo- nents W = USV ?, yielding semi-orthogonal matrices U  Rm×r and V  Rn×r together with an ordered vector of r singular values (in descending order) arranged in the diagonal matrix S  Rr×r. The linear operation defined by applying W onto x, can be then decomposed into a sum of indepen-
+Singular value decomposition (SVD) offers a fundamental view of matrix multiplications. In the context of neural networks, each weight matrix W  Rn m can be decomposed into three compo- nents W = USV ?, yielding semi-orthogonal matrices U  Rm r and V  Rn r together with an ordered vector of r singular values (in descending order) arranged in the diagonal matrix S  Rr r. The linear operation defined by applying W onto x, can be then decomposed into a sum of indepen-
 
 dent termsL, derived from mapping each column vi from V into the corresponding column ui from
 i=1	i	i
@@ -114,13 +116,13 @@ tions, for any weight matrix W , SVF learns a simple vector z Rr that provides t
 Negligible parameters: Learning only a vector z for each weight matrix allows for very efficient fine-tuning with orders of magnitudes fewer optimized parameters even when compared to prior approaches specifically designed for efficiency. For example, the widely popular LoRA approach requires (m+n) r' learnable parameters per weight matrix, where r' is a hyper-parameter that gen- erally needs to be set large enough for expressivity. While recent extensions, such LoRA-XS (Balazy et al., 2024), try to push efficiency even further, they often introduce limiting assumptions that curb applicability in several practical scenarios (see examples in Appendix C). In contrast, while SVF only needs r = min(m, n) parameters, we show it empirically does not display the same shortcom- ings thanks to working on a highly-meaning space provided by the latent expressiveness compressed in the weights of modern LLMs. SVF's scaling only the singular values may seem to lead to limited expressiveness, we wish to point out that the ability to affect the weight matrix in a full-rank manner technically provides more information than low-rank approaches.
 High compositionality: Decomposing the weights in independent singular components makes the learned z vectors highly composable and interpretable, opening numerous possibilities for adapta- tion via algebraic manipulations. Instead, LoRA-based methods inherently lack these properties. For instance, even if two LoRAs learned on the same task were to learn exactly the same adjustments for each W , directly interpolating between their compressed A and B matrices is unlikely to preserve any of their original behavior, given the countless number of equivalent parameter permutations they might have converged to.
 Principled regularization: Exclusively modifying the magnitude of pre-existing singular compo- nents provides a principled and effective form of regularization. In practice, this property enables us to fine-tune for arbitrary downstream tasks with only hundreds of data points without the risk of severe collapse or overfitting.
-End-to-end optimization with RL. We train a set of SVF vectors ?z = z1,  , zN×M to fine- tune an arbitrary language model p?W parameterized by ?W with RL, optimizing directly for task performance. Here, ?W = W1,   , WN×M is the set of weight matrices, where N is the number of layers and M is the number of weight matrices to fine-tune per layer. We use the seminal RE- INFORCE algorithm (Williams, 1992) and label each generated answer yi (for the prompt xi D) with a unitary reward based on its correctness r	1, 1 . Inspired by related applications of RL for optimizing LLMs (Ouyang et al., 2022), we regularize the REINFORCE objective by adding a KL penalty for deviating from the original model's behavior, weighted by a small coefficient ?  R+. Thus, our final objective function can be written as:
-J(?z) = E log p?W ' (yˆi | xi) r(yˆi, yi) - ?DKL(p?W ' ?p?W ),	(1)
+End-to-end optimization with RL. We train a set of SVF vectors ?z = z1,  , zN M to fine- tune an arbitrary language model p?W parameterized by ?W with RL, optimizing directly for task performance. Here, ?W = W1,   , WN M is the set of weight matrices, where N is the number of layers and M is the number of weight matrices to fine-tune per layer. We use the seminal RE- INFORCE algorithm (Williams, 1992) and label each generated answer yi (for the prompt xi D) with a unitary reward based on its correctness r	1, 1 . Inspired by related applications of RL for optimizing LLMs (Ouyang et al., 2022), we regularize the REINFORCE objective by adding a KL penalty for deviating from the original model's behavior, weighted by a small coefficient ?  R+. Thus, our final objective function can be written as:
+J(?z) = E log p?W ' (y i | xi) r(y i, yi) - ?DKL(p?W ' ?p?W ),	(1)
 where we use p? ' to denote the resulting language model after substituting the original weight matrices W with	'. While RL is generally considered less stable than next-token prediction ob-
 W
 jectives, we find the regularization properties of SVF avoid many of the failure modes of prior less- constrained parameterizations (see Section 4.3). Thus, combining these complementary components effectively enables us to avoid relying on expensive fine-tuning procedures with large hand-designed datasets as proxies, and directly maximize task performance end-to-end.
 In general, SVF with RL puts lower requirement on the dataset it trains on. For example, LoRA fine-tuning requires "explaining texts" to perform next token predictions, which puts a higher re- quirement on the dataset (e.g., imagine LoRA fine-tuning on a GSM8K dataset where no reasoning text but only the final number is provided). This benefit allows SVF to be more general and effective. One possible caveat SVF can face is the sparse rewards caused by a weak base model, which we discuss this further in Section 5.
-Self-adaptation is a critical mechanism in nature that has established itself as a core guiding princi- ple in modern system design (Klo¨s et al., 2015). Our initial efforts toward self-adaptive foundation models focus on the inference stage of LLMs, where we devise a simple two-pass adaptation strat- egy that combines K sets of base "expert" vectors z1:K trained with SVF to provide different kinds of capabilities (e.g., coding, math, etc). The mapping between a capability and the dataset we train on can be acquired in the dataset's meta data. In the first inference pass, given a task or an individ- ual input prompt, Transformer2 executes the model and observes its test-time behavior to derive a
+Self-adaptation is a critical mechanism in nature that has established itself as a core guiding princi- ple in modern system design (Klo s et al., 2015). Our initial efforts toward self-adaptive foundation models focus on the inference stage of LLMs, where we devise a simple two-pass adaptation strat- egy that combines K sets of base "expert" vectors z1:K trained with SVF to provide different kinds of capabilities (e.g., coding, math, etc). The mapping between a capability and the dataset we train on can be acquired in the dataset's meta data. In the first inference pass, given a task or an individ- ual input prompt, Transformer2 executes the model and observes its test-time behavior to derive a
 
 new z' vector tailored to its test-time conditions. This adapted z' is then used in the second infer- ence pass to provide an actual response with the newly adapted weights. The interaction between SVF-trained expert vectors and the adaptation strategies ensures seamless integration, where ex- pert vectors provide modular capabilities, and the adaptation strategies dynamically determine and compose the most suitable combination to address the input task. In this first work, we propose three simple approaches to produce the vector z' during the first inference pass, implementing self- adaption with distinct methods and requirements. Below, we provide an outline of each method and refer to Appendix A for additional implementation details.
 A) Prompt engineering: Our most basic approach involves constructing a new "adaptation" prompt which we use to directly ask the LLM to categorize the input prompt. Based on its response, we then extract one category out of the set of domain topics used to pre-train each SVF expert and, thus, we select the corresponding z' directly from z1:K. In our adaptation prompt, we also explicitly provide the option for a generic "others" category, allowing the model to use its base weights in case no expert provides appropriate capabilities. We show the format used to construct the adaptation prompt in Figure 3.
@@ -306,15 +308,59 @@ Figure 5: Results for the VLM domain.
 Table 2: Self-adaptation on unseen tasks. Normalized scores are in the parentheses.
 Method	MATH	Humaneval	ARC-Challenge
 
-LLAMA3-8B-INSTRUCT  324.54 (1.00)60.98 (1.00)80.63 (1.00)+ LoRA24.12 (0.98)52.44 (0.86)81.06 (1.01)+ Transformer2 (Prompt)25.22 (1.03)61.59 (1.01)81.74 (1.01)+ Transformer2 (Cls-expert)25.18 (1.03)62.80 (1.03)81.37 (1.01)+ Transformer2 (Few-shot)25.47 (1.04)62.99 (1.03)82.61 (1.02)MISTRAL-7B-INSTRUCT-V0.3
-+ LoRA13.02 (1.00)
-13.16 (1.01)43.29 (1.00)
-37.80 (0.87)71.76 (1.00)
-75.77 (1.06)+ Transformer2 (Prompt)11.86 (0.91)43.90 (1.01)72.35 (1.01)+ Transformer2 (Cls-expert)11.60 (0.89)43.90 (1.01)74.83 (1.04)+ Transformer2 (Few-shot)13.39 (1.03)47.40 (1.09)75.47 (1.05)LLAMA3-70B-INSTRUCT
-+ LoRA40.64 (1.00)
-25.40 (0.62)78.66 (1.00)
-73.78 (0.94)87.63 (1.00)
-83.70 (0.96)+ Transformer2 (Prompt)40.44 (1.00)79.88 (1.02)88.48 (1.01)ARC-Challenge task and still significantly deteriorate performance on both MATH and Humaneval. This discrepancy suggests that LoRA's parameterization and optimization might be particularly sen- sitive to overfitting, especially when trained with the smaller GSM8K and MBPP-Pro datasets, the tasks that provide information most related to MATH and Humaneval. In Figure 5, we find a sim- ilar dichotomy in the OKVQA task, with the performance of the base LLAMA3-LLAVA-NEXT-8B VLM only improving after applying Transformer2. We note that also in this setting, Transformer2 performs self-adaptation only from the expert vectors from GSM8K, MBPP-Pro, and ARC-Easy. Thus, this result further underscores the high flexibility of self-adaptation, transferring knowledge compressed for tasks entirely based on language even for unrelated vision-based problems.
+LLAMA3-8B-INSTRUCT  3
+24.54 (1.00)
+60.98 (1.00)
+80.63 (1.00)
++ LoRA
+24.12 (0.98)
+52.44 (0.86)
+81.06 (1.01)
++ Transformer2 (Prompt)
+25.22 (1.03)
+61.59 (1.01)
+81.74 (1.01)
++ Transformer2 (Cls-expert)
+25.18 (1.03)
+62.80 (1.03)
+81.37 (1.01)
++ Transformer2 (Few-shot)
+25.47 (1.04)
+62.99 (1.03)
+82.61 (1.02)
+MISTRAL-7B-INSTRUCT-V0.3
++ LoRA
+13.02 (1.00)
+13.16 (1.01)
+43.29 (1.00)
+37.80 (0.87)
+71.76 (1.00)
+75.77 (1.06)
++ Transformer2 (Prompt)
+11.86 (0.91)
+43.90 (1.01)
+72.35 (1.01)
++ Transformer2 (Cls-expert)
+11.60 (0.89)
+43.90 (1.01)
+74.83 (1.04)
++ Transformer2 (Few-shot)
+13.39 (1.03)
+47.40 (1.09)
+75.47 (1.05)
+LLAMA3-70B-INSTRUCT
++ LoRA
+40.64 (1.00)
+25.40 (0.62)
+78.66 (1.00)
+73.78 (0.94)
+87.63 (1.00)
+83.70 (0.96)
++ Transformer2 (Prompt)
+40.44 (1.00)
+79.88 (1.02)
+88.48 (1.01)
+ARC-Challenge task and still significantly deteriorate performance on both MATH and Humaneval. This discrepancy suggests that LoRA's parameterization and optimization might be particularly sen- sitive to overfitting, especially when trained with the smaller GSM8K and MBPP-Pro datasets, the tasks that provide information most related to MATH and Humaneval. In Figure 5, we find a sim- ilar dichotomy in the OKVQA task, with the performance of the base LLAMA3-LLAVA-NEXT-8B VLM only improving after applying Transformer2. We note that also in this setting, Transformer2 performs self-adaptation only from the expert vectors from GSM8K, MBPP-Pro, and ARC-Easy. Thus, this result further underscores the high flexibility of self-adaptation, transferring knowledge compressed for tasks entirely based on language even for unrelated vision-based problems.
 Comparing the three proposed adaptation strategies, we highlight a clear monotonic trend - with more involved strategies and additional information about the test-time condition, self-adaptation appears to be increasingly effective. In particular, Transformer2 with few-shot self-adaptation is almost always the highest-scoring method, providing notable improvements across all tested settings except for LLAMA3-70B-INSTRUCT @MATH, where we have only SVF-tuned half of the layers due to our limited GPU resources. This trend shows that providing additional or different kinds of information seems to be highly beneficial to our framework, suggesting that Transformer2 could provide foundation models with new means to continually improve performance when deployed in lifelong settings.
 
 Table 3 reports the inference time required by the prompt adap- tation strategy of Transformer2, with the time spent on solving the entire problem set presented separately for the 1st and 2nd passes. Notice that the 2nd pass inference time is the time spent on solving the problems, and the 1st pass inference time is the time for self-adaptation, 1st to 2nd pass inference time ratios are in the parentheses. While the additional inference pass might appear to double the overall runtime, it is important
@@ -322,7 +368,14 @@ to note that inference time primarily depends on the number of tokens generated.
 
 Table 3: Time cost of 2-pass inference in prompt adaptation strategy of Transformer2 for the entire problem set. 1st to 2nd pass inference time ratios are shown in parentheses.	
 
-Task1st (s)  2nd (s)MATH42.64 (13%)	321.19Humaneval2.76 (19%)	14.28ARC-Challenge13.40 (47%)	28.51
+Task
+1st (s)  2nd (s)
+MATH
+42.64 (13%)	321.19
+Humaneval
+2.76 (19%)	14.28
+ARC-Challenge
+13.40 (47%)	28.51
 length of the input. ARC-challenge's cost ratio is large because they are single choice problems
 and therefore the cost of the 2nd pass is also  (n). In general settings, we think it is reasonable to assume this ratio to be closer to those of MATH and Humaneval. For a detailed discussion on improving the efficiency of CEM few-shot adaptation methods, please see Appendix D
 
@@ -372,8 +425,86 @@ SVF vs LoRA: Finally, we also evaluate LoRA using the RL objective (see trials 2
 Analysis 4: Cross-model compatibility Finally, we explore the potential for our self-adaptation framework to be applied across different LLMs. In particular, we evaluate whether the SVF ex- pert vectors trained on LLAMA3-8B-INSTRUCT can benefit MISTRAL-7B-INSTRUCT-V0.3, and whether we can perform adaptation across the expert vectors of these two models. We present our main findings in Table 5 and refer to Appendix B for additional detailed results. Surprisingly, we find that positive transfer occurs across the two models, with visible benefits in 2 out of 3 tasks. We
 
 Table 4: Ablation studies. We fine-tune LLAMA3-8B-INSTRUCT on the GSM8K training split with different settings and the results on the test split along with zero-shot transfer results on MATH.
-#MethodObjective Function	Module#Params (?)GSM8K (?)MATH (?)0LLAMA-3-8B-INSTRUCT75.89 (1.00)24.54 (1.00)1SVFPolicy gradient	MLP0.39M78.62 (1.04)24.20 (0.99)2SVFPolicy gradient	attention0.16M76.19 (1.00)24.20 (0.99)3SVFPolicy gradient	MLP + attention0.58M79.23 (1.04)25.04 (1.04)4SVFNext token pred	attention0.16M60.50 (0.80)18.52 (0.75)5LoRAPolicy gradient	attention6.82M57.92 (0.76)15.72 (0.64)6LoRANext token pred	attention6.82M77.18 (0.98)24.12 (0.96)7LoRANext token pred	MLP + attention35.13M75.66 (0.96)22.12 (0.91)Table 5: Cross-model z vector transfer. Results from transferring the expert vectors trained on LLAMA3-8B-INSTRUCT to MISTRAL-7B-INSTRUCT-V0.3 with cross model few-shot adaptation.
-MethodMATHHumanevalARC-ChallengeSVF training taskGSM8KMBPP-proARC-EasyMISTRAL-7B-INSTRUCT-V0.313.02 (1.00)43.29 (1.00)71.76 (1.00)+ Llama SVF (ordered si)11.96 (0.92)45.12 (1.04)72.01 (1.00)+ Llama SVF (shuffled si)10.52 (0.81)40.24 (0.93)70.82 (0.99)+ Few-shot adaptation (cross-model)12.65 (0.97)46.75 (1.08)75.64 (1.05)note these improvements are due to the inherent ordering of the SVF parameterization, as randomly shuffling each SVF vector before applying it to the Mistral model consistently degrades performance.
+#
+Method
+Objective Function	Module
+#Params (?)
+GSM8K (?)
+MATH (?)
+0
+
+LLAMA-3-8B-INSTRUCT
+
+75.89 (1.00)
+24.54 (1.00)
+1
+SVF
+Policy gradient	MLP
+0.39M
+78.62 (1.04)
+24.20 (0.99)
+2
+SVF
+Policy gradient	attention
+0.16M
+76.19 (1.00)
+24.20 (0.99)
+3
+SVF
+Policy gradient	MLP + attention
+0.58M
+79.23 (1.04)
+25.04 (1.04)
+4
+SVF
+Next token pred	attention
+0.16M
+60.50 (0.80)
+18.52 (0.75)
+5
+LoRA
+Policy gradient	attention
+6.82M
+57.92 (0.76)
+15.72 (0.64)
+6
+LoRA
+Next token pred	attention
+6.82M
+77.18 (0.98)
+24.12 (0.96)
+7
+LoRA
+Next token pred	MLP + attention
+35.13M
+75.66 (0.96)
+22.12 (0.91)
+Table 5: Cross-model z vector transfer. Results from transferring the expert vectors trained on LLAMA3-8B-INSTRUCT to MISTRAL-7B-INSTRUCT-V0.3 with cross model few-shot adaptation.
+Method
+MATH
+Humaneval
+ARC-Challenge
+SVF training task
+GSM8K
+MBPP-pro
+ARC-Easy
+MISTRAL-7B-INSTRUCT-V0.3
+13.02 (1.00)
+43.29 (1.00)
+71.76 (1.00)
++ Llama SVF (ordered si)
+11.96 (0.92)
+45.12 (1.04)
+72.01 (1.00)
++ Llama SVF (shuffled si)
+10.52 (0.81)
+40.24 (0.93)
+70.82 (0.99)
++ Few-shot adaptation (cross-model)
+12.65 (0.97)
+46.75 (1.08)
+75.64 (1.05)
+note these improvements are due to the inherent ordering of the SVF parameterization, as randomly shuffling each SVF vector before applying it to the Mistral model consistently degrades performance.
 
 This operation leads to notable performance degradation across each task. Finally, by performing few-shot adaptation using the SVF vectors collected from both models, the performance of MISTRAL-7B-INSTRUCT-V0.3 further improves across the board. We observe that these gains even surpass the best score from adapting MISTRAL-7B-INSTRUCT-V0.3 with all the SVF vectors in the ARC-Challenge task reported in Table 2. While these results appear promising, we note that the surprising com- patibility discovered through our naive transfer approach is po- tentially tied to the similarity between the architectures of the two considered LLMs. To this end, whether similar transfer can be replicated with models of different scales remains an open re- search question that could open the doors to disentangling and recycling task-specific skills for newer/larger models, with im-
 
@@ -583,7 +714,7 @@ Edward J Hu, Yelong Shen, Phillip Wallis, Zeyuan Allen-Zhu, Yuanzhi Li, Shean Wa
 Albert Q Jiang, Alexandre Sablayrolles, Antoine Roux, Arthur Mensch, Blanche Savary, Chris Bam- ford, Devendra Singh Chaplot, Diego de las Casas, Emma Bou Hanna, Florian Bressand, et al. Mixtral of experts. arXiv preprint arXiv:2401.04088, 2024.
 Junmo Kang, Leonid Karlinsky, Hongyin Luo, Zhen Wang, Jacob Hansen, James Glass, David Cox, Rameswar Panda, Rogerio Feris, and Alan Ritter. Self-moe: Towards compositional large language models with self-specialized experts. arXiv preprint arXiv:2406.12034, 2024.
 Jared Kaplan, Sam McCandlish, Tom Henighan, Tom B Brown, Benjamin Chess, Rewon Child, Scott Gray, Alec Radford, Jeffrey Wu, and Dario Amodei. Scaling laws for neural language models. arXiv preprint arXiv:2001.08361, 2020.
-Verena Klo¨s, Thomas Go¨thel, and Sabine Glesner. Adaptive knowledge bases in self-adaptive sys- tem design. In 2015 41st Euromicro Conference on Software Engineering and Advanced Appli- cations, pp. 472-478, 2015. doi: 10.1109/SEAA.2015.48.
+Verena Klo s, Thomas Go thel, and Sabine Glesner. Adaptive knowledge bases in self-adaptive sys- tem design. In 2015 41st Euromicro Conference on Software Engineering and Advanced Appli- cations, pp. 472-478, 2015. doi: 10.1109/SEAA.2015.48.
 Dawid Jan Kopiczko, Tijmen Blankevoort, and Yuki Markus Asano. Vera: Vector-based random matrix adaptation. arXiv preprint arXiv:2310.11454, 2023.
 Vijay Lingam, Atula Tejaswi, Aditya Vavre, Aneesh Shetty, Gautham Krishna Gudur, Joy- deep Ghosh, Alex Dimakis, Eunsol Choi, Aleksandar Bojchevski, and Sujay Sanghavi. Svft: Parameter-efficient fine-tuning with singular vectors. arXiv preprint arXiv:2405.19597, 2024.
 Haokun Liu, Derek Tam, Mohammed Muqeeth, Jay Mohta, Tenghao Huang, Mohit Bansal, and Colin A Raffel. Few-shot parameter-efficient fine-tuning is better and cheaper than in-context learning. Advances in Neural Information Processing Systems, 35:1950-1965, 2022.
@@ -605,7 +736,7 @@ Ceyao Zhang, Kaijie Yang, Siyi Hu, Zihao Wang, Guanghe Li, Yihang Sun, Cheng Zha
 pp. 17591-17599, 2024.
 Qingru Zhang, Minshuo Chen, Alexander Bukharin, Nikos Karampatziakis, Pengcheng He, Yu Cheng, Weizhu Chen, and Tuo Zhao. Adalora: Adaptive budget allocation for parameter- efficient fine-tuning. arXiv preprint arXiv:2303.10512, 2023.
 Tong Zhu, Xiaoye Qu, Daize Dong, Jiacheng Ruan, Jingqi Tong, Conghui He, and Yu Cheng. Llama-moe: Building mixture-of-experts from llama with continual pre-training. arXiv preprint arXiv:2406.16554, 2024.
-Mingchen Zhuge, Haozhe Liu, Francesco Faccio, Dylan R Ashley, Ro´bert Csorda´s, Anand Gopalakrishnan, Abdullah Hamdi, Hasan Abed Al Kader Hammoud, Vincent Herrmann, Kazuki Irie, et al. Mindstorms in natural language-based societies of mind. arXiv preprint arXiv:2305.17066, 2023.
+Mingchen Zhuge, Haozhe Liu, Francesco Faccio, Dylan R Ashley, Ro bert Csorda s, Anand Gopalakrishnan, Abdullah Hamdi, Hasan Abed Al Kader Hammoud, Vincent Herrmann, Kazuki Irie, et al. Mindstorms in natural language-based societies of mind. arXiv preprint arXiv:2305.17066, 2023.
 
 A IMPLEMENTATION DETAILS AND HYPER-PARAMETERS
 
@@ -648,8 +779,16 @@ Clip max norm	1	10-3
 KL coefficient ?	0.0, 0.1, 0.2, 0.3
 LoRA Hyperparameters
 
-Rank16LoRA alpha32LoRA dropout0.05Global batch size256Learning rate	2 × 10-4, 5 × 10-4, 2 × 10-5, 5 × 10-5, 2 × 10-6. 5 × 10-6,
-Clip max norm	1 × 10-3, 1.0
+Rank
+16
+LoRA alpha
+32
+LoRA dropout
+0.05
+Global batch size
+256
+Learning rate	2   10-4, 5   10-4, 2   10-5, 5   10-5, 2   10-6. 5   10-6,
+Clip max norm	1   10-3, 1.0
 Table 7: Additional Comparison Experiment. Normalized scores are in the parentheses.
 
 Method	GSM8K	MBPP-Pro	ARC-Easy
@@ -659,7 +798,27 @@ LLAMA3-8B-INSTRUCT	75.89 (1.00)	64.65 (1.00)	88.59 (1.00)
 
 Method	MATH	Humaneval	ARC-Challenge
 LLAMA3-8B-INSTRUCT	24.54 (1.00)	60.98 (1.00)	80.63 (1.00)
-+ IA323.64 (0.96)59.76 (0.98)81.57 (1.01)+ DORA24.44 (0.99)52.44 (0.86)81.14 (1.01)+ Transformer2 (Prompt)25.22 (1.03)61.59 (1.01)81.74 (1.01)+ Transformer2 (Cls-expert)25.18 (1.03)62.80 (1.03)81.37 (1.01)+ Transformer2 (Few-shot)25.47 (1.04)62.99 (1.03)82.61 (1.02)B ADDITIONAL RESULTS
++ IA3
+23.64 (0.96)
+59.76 (0.98)
+81.57 (1.01)
++ DORA
+24.44 (0.99)
+52.44 (0.86)
+81.14 (1.01)
++ Transformer2 (Prompt)
+25.22 (1.03)
+61.59 (1.01)
+81.74 (1.01)
++ Transformer2 (Cls-expert)
+25.18 (1.03)
+62.80 (1.03)
+81.37 (1.01)
++ Transformer2 (Few-shot)
+25.47 (1.04)
+62.99 (1.03)
+82.61 (1.02)
+B ADDITIONAL RESULTS
 
 B.1 BASELINE COMPARISON TO MORE PEFT METHODS
 
@@ -689,7 +848,7 @@ LLAMA3-8B-INSTRUCT	80.63 (1.00)	80.63 (1.00)	80.63 (1.00)
 our few-shot strategy are evident with as few as 3 to 5 test samples. Moreover, performance appears to plateau beyond 10 samples, underscoring how our essential and inherently regularized SVF pa-
 
 rameterization effectively complements self-adaptation. This efficiency enables optimal use of data to enhance understanding of the test task.
-For completeness, we have also conducted experiments with identical settings on IA3 (Liu et al., 2022), another method that leverages few-shot examples. All experiments were conducted with full batch size, a learning rate of 5 × 10-5, with 100 and 1000 training steps.
+For completeness, we have also conducted experiments with identical settings on IA3 (Liu et al., 2022), another method that leverages few-shot examples. All experiments were conducted with full batch size, a learning rate of 5   10-5, with 100 and 1000 training steps.
 Our results indicate that the performance of IA3 on the unseen test tasks is inferior to CEM-based adaptation for all numbers of few shots considered. We note that in our experiment, we have to considerably limit the number of optimization steps to avoid overfitting the 500,000 parameters of IA3 on the few-shot samples. However, we believe overfitting might still be occurring to some degree even after only 100 steps, as also validated by the model's perfect training accuracy on this extremely small dataset. This limitation of fine-tuning-based adaptation highlights the superior generalization capability of our CEM-based adaptation approach in Transformer2.
 
 B.3 CROSS-MODEL SVF TRANSFER ON THE TRAINING TASKS
@@ -697,7 +856,22 @@ B.3 CROSS-MODEL SVF TRANSFER ON THE TRAINING TASKS
 We provide complementary results to Table 5 in the main text, where we analyze the SVF cross- model transfer performance from training on GSM8K, MBPP-pro, and ARC-Easy to our consid- ered test tasks. In Table 9, we show the results in the same transfer setting this time evaluating MISTRAL-7B-INSTRUCT-V0.3 on the same training tasks where the LLAMA3-8B-INSTRUCT SVF vectors were obtained from. Overall, we recognize a similar trend, albeit with less consistent im- provement from the original model (only in 1 out of 3 tasks), but still much higher performance than the randomly shuffled baseline. These results further confirm that the canonical ordering of the SVF parameterization is key for cross-model transfer, highlighting once more its inherent suitability to empower self-adaptation.
 
 Table 9: Cross-model z Vector Transfer. Results from transfering the SVF expert vectors trained on LLAMA3-8B-INSTRUCT to MISTRAL-7B-INSTRUCT-V0.3 in the respective training tasks.
-MethodGSM8KMBPP-proARC-EasyMISTRAL-7B-INSTRUCT-V0.342.83 (1.00)49.50 (1.00)81.65 (1.00)+ Llama SVF (ordered si)42.61 (0.99)48.48 (0.98)81.78 (1.00)+ Llama SVF (shuffled si)41.93 (0.98)46.34 (0.94)80.81 (0.99)
+Method
+GSM8K
+MBPP-pro
+ARC-Easy
+MISTRAL-7B-INSTRUCT-V0.3
+42.83 (1.00)
+49.50 (1.00)
+81.65 (1.00)
++ Llama SVF (ordered si)
+42.61 (0.99)
+48.48 (0.98)
+81.78 (1.00)
++ Llama SVF (shuffled si)
+41.93 (0.98)
+46.34 (0.94)
+80.81 (0.99)
 
 B.4 TRAINING CURVE OF LORA AND POLICY GRADIENT
 Figure 9 gives the learning curves for LoRA training on the GSM8K task.
@@ -739,7 +913,7 @@ Figure 9: Training LoRA with policy gradient. The dashed line shows the performa
 
 C PCA ON LLAMA3 AND MISTRAL
 
-To investigate if the singular components that have the highest singular values are able to capture most of the information of a weight matrix, we conducted Principle Component Analysis (PCA) on the weight matrices in LLAMA3-8B-INSTRUCT and MISTRAL-7B-INSTRUCT-V0.3 (see Fig- ures 10 and 11). In each figure, we plot the variance that is captured by the top r components across all the layers in each type of modules for a weight matrix W ? Rm×n:
+To investigate if the singular components that have the highest singular values are able to capture most of the information of a weight matrix, we conducted Principle Component Analysis (PCA) on the weight matrices in LLAMA3-8B-INSTRUCT and MISTRAL-7B-INSTRUCT-V0.3 (see Fig- ures 10 and 11). In each figure, we plot the variance that is captured by the top r components across all the layers in each type of modules for a weight matrix W ? Rm n:
 
 ratio = L
 
