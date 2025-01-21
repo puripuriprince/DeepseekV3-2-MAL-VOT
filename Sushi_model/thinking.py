@@ -13,8 +13,7 @@ class ChainOfThought(nn.Module):
         dim: int = 768,
         num_reasoning_steps: int = 3,
         max_thought_len: int = 512,
-        dropout: float = 0.1,
-        parent_model = None
+        dropout: float = 0.1
     ):
         super().__init__()
         
@@ -23,7 +22,6 @@ class ChainOfThought(nn.Module):
         self.dim = dim_value
         self.num_steps = num_reasoning_steps
         self.max_thought_len = max_thought_len
-        self.model = parent_model
 
         # Thought generation layers
         self.thought_generator = nn.ModuleList([
@@ -95,14 +93,13 @@ class ChainOfThought(nn.Module):
                     # Expand to match sequence length
                     tensor = tensor.unsqueeze(1).expand(batch_size, seq_len, -1)
                     x = x + tensor
-                    
                     # Shape verification after adding context
                     assert x.shape[0] == batch_size, f"Expected batch size {batch_size}, got {x.shape[0]}"
                     assert x.shape[1] == seq_len, f"Expected seq length {seq_len}, got {x.shape[1]}"
+                    
+        # Store reasoning steps in stats
+        self.reasoning_stats = reasoning_steps
         
-        # Store reasoning steps in model if test time enabled
-        if hasattr(self.model, '_test_time_enabled') and self.model._test_time_enabled:
-            self.model._compute_stats.extend(reasoning_steps)
             
         # Final output projection
         out = self.output_proj(x)

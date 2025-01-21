@@ -5,14 +5,14 @@ from typing import Dict, Optional, Union, List, Tuple
 from dataclasses import dataclass
 
 from .transformer_squared import TransformerSquared
-from .diff_attention import MultiHeadDifferentialAttention
+from .diff_attention import MultiHeadDifferentialAttention # why isnt this being used?
 from .thinking import ChainOfThought
 from .test_time_compute import TestTimeCompute
 from .byte_latent_patches import ByteLatentPatches, ByteLevelTokenizer
 from .memory_manager import MemoryManager
 from .adaptation import (
     BaseAdaptationStrategy,
-    PromptBasedAdaptationStrategy,
+    PromptBasedAdaptationStrategy,# why arent these being used?
     ClassificationExpertAdaptationStrategy, 
     CEMAdaptationStrategy,
     SVFAdaptationStrategy
@@ -53,12 +53,16 @@ class SushiFull(nn.Module):
         self._compute_stats = []
         
         try:
+            # Initialize tokenizer
+            logger.debug("Initializing tokenizer")
+            self.tokenizer = ByteLevelTokenizer()
+            
             # Initialize components as submodules
             logger.debug("Initializing transformer component")
             self.transformer = TransformerSquared(config)
             
             logger.debug("Initializing chain of thought component")
-            self.thinking = ChainOfThought(config, parent_model=self)
+            self.thinking = ChainOfThought(config)
             
             logger.debug("Initializing test time compute")
             self.ttc = TestTimeCompute(config)
@@ -253,4 +257,4 @@ class SushiFull(nn.Module):
                 'stored_tokens': self.memory.stats.stored_tokens,
                 'retrieved_tokens': self.memory.stats.retrieved_tokens,
                 'hit_rate': self.memory.stats.hit_rate
-            }
+            }

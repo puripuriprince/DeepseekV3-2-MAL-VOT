@@ -29,26 +29,15 @@ class ModelChat:
         with open(config_path, 'r') as f:
             raw_config = json.load(f)
             
-        # Map config keys to match SushiHybrid parameters
-        self.config = {
-            'dim': raw_config.get('dim', 768),
-            'num_layers': raw_config.get('num_layers', 64),
-            'num_heads': raw_config.get('heads', 12),
-            'num_experts': raw_config.get('num_experts', 24),
-            'mlp_ratio': raw_config.get('mlp_ratio', 4),
-            'dropout': raw_config.get('dropout', 0.1),
-            'max_sequence_length': raw_config.get('max_sequence_length', 8192),
-            'memory_size': raw_config.get('memory_size', 512),
-            'chunk_size': raw_config.get('chunk_size', 64),
-            'local_window': raw_config.get('local_window', 128),
-            'use_gradient_checkpointing': raw_config.get('use_gradient_checkpointing', False)
-        }
+        # Create ModelConfig from raw config
+        from config.model_config import ModelConfig
+        self.config = ModelConfig.from_dict(raw_config)
         
         try:
             # Initialize model and tokenizer
             logger.info("Initializing model...")
-            from Sushi_model.sushiFull import SushiHybrid
-            self.model = SushiHybrid(**self.config)
+            from Sushi_model.sushiFull import SushiFull
+            self.model = SushiFull(self.config)
             self.device = device
             self.test_mode = test_mode
             

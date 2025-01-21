@@ -1,7 +1,9 @@
 {
-  "dim": 1024,
+  "dim": 768,
+  "hidden_size": 768,
   "num_layers": 24,
-  "heads": 16,
+  "heads": 12,
+  "num_heads": 12,
   "num_experts": 3,
   "mlp_ratio": 4,
   "dropout": 0.1,
@@ -23,11 +25,40 @@
   "image_size": 256,
   "patch_size": 16,
   "mesh_max_vertices": 1024,
-  "memory_size": 512,
+  "memory_size": 768,
   "use_gradient_checkpointing": true,
   "num_workers": 4,
-  "laion_path": "data\\laion\\train",
-  "c4_path": "data\\c4\\train_small.jsonl",
-  "laion_val_path": "data\\laion\\val",
-  "c4_val_path": "data\\c4\\val_small.jsonl"
-}
+  "use_flash_attention": true,
+  "memory_efficient_attention": true,
+  "use_diff_transformer": true,
+  "use_self_adaptation": true,
+  "use_xformers": false,
+  "use_local_block": false,
+  "use_accelerated_scan": false,
+  "use_weighted_combination": false,
+  
+  "training_stages": {
+    "distillation": {
+      "epochs": 3,
+      "learning_rate": 2e-4,
+      "temperature": 2.0,
+      "alpha": 0.5
+    },
+    "image": {
+      "epochs": 5,
+      "learning_rate": 1e-4
+    },
+    "mesh": {
+      "epochs": 5,
+      "learning_rate": 1e-4
+    },
+    "cot": {
+      "epochs": 5,
+      "learning_rate": 1e-4
+    },
+    "finetune": {
+      "epochs": 2,
+      "learning_rate": 1e-5
+    }
+  }
+}

@@ -112,6 +112,20 @@ class ModelConfig:
         })
     
     def __post_init__(self):
+        # Validate configuration
+        if self.dim % self.num_heads != 0:
+            raise ValueError(f"Model dimension ({self.dim}) must be divisible by number of heads ({self.num_heads})")
+        
+        if self.dim % self.heads != 0:
+            raise ValueError(f"Model dimension ({self.dim}) must be divisible by number of attention heads ({self.heads})")
+            
+        # Ensure hidden_size matches dim for consistency
+        self.hidden_size = self.dim
+        
+        # Validate GroupNorm dimensions
+        if self.dim % self.heads != 0:
+            raise ValueError(f"Model dimension ({self.dim}) must be divisible by number of groups ({self.heads}) for GroupNorm")
+            
         # Set up logging based on config
         if self.log_level:
             logging.getLogger().setLevel(getattr(logging, self.log_level))

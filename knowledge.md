@@ -57,6 +57,16 @@
 3. Monitor memory usage in forward passes
 4. Profile performance-critical sections
 5. Document complex algorithms
+6. When using DeepSeek as teacher model:
+   - Use local DeepSeek implementation instead of HuggingFace
+   - Convert to half precision for memory efficiency
+   - Handle tokenization differences carefully
+   - Match sequence lengths between student and teacher
+   - Scale logits by temperature in distillation loss
+6. Avoid circular references between model components
+   - Use event systems or callbacks instead of direct parent references
+   - Store computation results locally rather than in parent
+   - Pass necessary context through method parameters
 6. Use OOP principles consistently
 7. Make architectural changes optional via config flags
 8. Preserve backward compatibility when adding features
@@ -91,3 +101,15 @@
 3. Add more performance metrics
 4. Enhance error handling
 5. Improve documentation
+
+## Training Pipeline
+- Multi-stage training in order: distillation → image → mesh → CoT → fine-tuning
+- Each stage loads checkpoint from previous stage
+- Use lower learning rates for later stages (e.g., 1e-5 for fine-tuning)
+- Enable gradient checkpointing for memory efficiency
+- Monitor memory usage with built-in stats objects
+- Use half precision for teacher model in distillation
+- Preserve knowledge across stages by:
+  - Freezing or partially freezing earlier layers
+  - Using replay data from previous stages
+  - Leveraging memory system for surprising examples

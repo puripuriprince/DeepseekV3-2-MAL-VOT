@@ -1,4 +1,462 @@
-# Standard library imports
+class FineTuneTrainer(BaseTrainer):
+    """Trainer for final fine-tuning stage"""
+    def __init__(
+        self,
+        model: nn.Module,
+        config: Any,
+        learning_rate: float = 1e-5,  # Lower learning rate for fine-tuning
+        device: str = "cuda" if torch.cuda.is_available() else "cpu"
+    ):
+        super().__init__(model, config, device)
+        
+        # Initialize optimizer
+        self.optimizer = optim.AdamW(
+            self.model.parameters(),
+            lr=learning_rate
+        )
+        self.scheduler = optim.lr_scheduler.CosineAnnealingLR(
+            self.optimizer,
+            T_max=1000
+        )
+        
+    def train_step(
+        self,
+        batch: Dict[str, torch.Tensor]
+    ) -> Dict[str, float]:
+        """Single training step for fine-tuning"""
+        self.model.train()
+        self.optimizer.zero_grad()
+        
+        # Enable test-time compute
+        self.model.enable_test_time()
+        
+        # Process different input modalities
+        outputs = {}
+        losses = {}
+        
+        # Text modality
+        if "input_ids" in batch:
+            text_out = self.model(batch["input_ids"].to(self.device))
+            outputs["text"] = text_out
+            if "target_ids" in batch:
+                losses["text_loss"] = F.cross_entropy(
+                    text_out["logits"].view(-1, text_out["logits"].size(-1)),
+                    batch["target_ids"].to(self.device).view(-1)
+                )
+                
+        # Image modality
+        if "images" in batch:
+            image_out = self.model(
+                {"image": batch["images"].to(self.device)},
+                input_type="image"
+            )
+            outputs["image"] = image_out
+            if "image_labels" in batch:
+                losses["image_loss"] = F.cross_entropy(
+                    image_out["logits"],
+                    batch["image_labels"].to(self.device)
+                )
+                
+        # Mesh modality
+        if "vertices" in batch and "faces" in batch:
+            mesh_out = self.model(
+                {
+                    "mesh": (
+                        batch["vertices"].to(self.device),
+                        batch["faces"].to(self.device)
+                    )
+                },
+                input_type="mesh"
+            )
+            outputs["mesh"] = mesh_out
+            if "mesh_labels" in batch:
+                losses["mesh_loss"] = F.cross_entropy(
+                    mesh_out["logits"],
+                    batch["mesh_labels"].to(self.device)
+                )
+        
+        # Get reasoning statistics if available
+        stats = self.model.get_compute_stats()
+        if stats.get('reasoning_steps'):
+            reasoning_analysis = self.analyze_reasoning(stats['reasoning_steps'][-1])
+            losses["reasoning_loss"] = self.compute_reasoning_loss(reasoning_analysis)
+        
+        # Combine all losses
+        total_loss = sum(losses.values())
+        
+        # Backward pass
+        total_loss.backward()
+        torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.config.gradient_clip)
+        self.optimizer.step()
+        self.scheduler.step()
+        
+        # Disable test-time compute
+        self.model.disable_test_time()
+        
+        # Return metrics
+        metrics = {
+            "total_loss": total_loss.item(),
+            **{k: v.item() for k, v in losses.items()}
+        }
+        return metrics
+        
+    def compute_reasoning_loss(self, reasoning_analysis: Dict) -> torch.Tensor:
+        """Compute loss based on reasoning quality"""
+        gate_std = torch.tensor(np.std(reasoning_analysis['gate_values'])).to(self.device)
+        gate_loss = 1.0 / (1.0 + gate_std)
+        
+        impact_mean = torch.tensor(np.mean(reasoning_analysis['step_impacts'])).to(self.device)
+        impact_loss = -impact_mean
+        
+        return gate_loss + impact_loss
+
+def run_training_pipeline(
+    model: nn.Module,
+    config: Any,
+    train_loaders: Dict[str, DataLoader],
+    val_loaders: Dict[str, DataLoader],
+    checkpoint_dir: str = "checkpoints"
+):
+    """
+    Run the complete training pipeline through all stages
+    
+    Args:
+        model: The SushiFull model to train
+        config: Training configuration
+        train_loaders: Dict of DataLoaders for each stage
+        val_loaders: Dict of validation DataLoaders
+        checkpoint_dir: Directory to save checkpoints
+    """
+    logger.info("Starting multi-stage training pipeline")
+    
+    # Stage 1: Knowledge Distillation
+    logger.info("Stage 1: Knowledge Distillation")
+    dist_trainer = DistillationTrainer(
+        model=model,
+        config=config,
+        learning_rate=config.learning_rate,
+        temperature=config.temperature,
+        alpha=config.alpha
+    )
+    dist_trainer.train(
+        train_loaders["distillation"],
+        val_loaders["distillation"],
+        num_epochs=config.distill_epochs,
+        save_dir=checkpoint_dir
+    )
+    
+    # Stage 2: Image Training
+    logger.info("Stage 2: Image Modality Training")
+    image_trainer = ImageTrainer(
+        model=model,
+        config=config,
+        learning_rate=config.image_lr
+    )
+    image_trainer.load_checkpoint(f"{checkpoint_dir}/best_distilled_model.pt")
+    image_trainer.train(
+        train_loaders["image"],
+        val_loaders["image"],
+        num_epochs=config.image_epochs,
+        save_dir=checkpoint_dir
+    )
+    
+    # Stage 3: Mesh Training
+    logger.info("Stage 3: Mesh Modality Training")
+    mesh_trainer = MeshTrainer(
+        model=model,
+        config=config,
+        learning_rate=config.mesh_lr
+    )
+    mesh_trainer.load_checkpoint(f"{checkpoint_dir}/best_image_model.pt")
+    mesh_trainer.train(
+        train_loaders["mesh"],
+        val_loaders["mesh"],
+        num_epochs=config.mesh_epochs,
+        save_dir=checkpoint_dir
+    )
+    
+    # Stage 4: Chain of Thought Training
+    logger.info("Stage 4: Chain of Thought Training")
+    cot_trainer = CoTTrainer(
+        model=model,
+        config=config,
+        learning_rate=config.cot_lr
+    )
+    cot_trainer.load_checkpoint(f"{checkpoint_dir}/best_mesh_model.pt")
+    cot_trainer.train(
+        train_loaders["cot"],
+        val_loaders["cot"],
+        num_epochs=config.cot_epochs,
+        save_dir=checkpoint_dir
+    )
+    
+    # Stage 5: Fine-tuning
+    logger.info("Stage 5: Final Fine-tuning")
+    finetune_trainer = FineTuneTrainer(
+        model=model,
+        config=config,
+        learning_rate=config.finetune_lr
+    )
+    finetune_trainer.load_checkpoint(f"{checkpoint_dir}/best_cot_model.pt")
+    finetune_trainer.train(
+        train_loaders["finetune"],
+        val_loaders["finetune"],
+        num_epochs=config.finetune_epochs,
+        save_dir=checkpoint_dir
+    )
+    
+    logger.info("Multi-stage training pipeline completed")    def save_checkpoint(
+        self,
+class CoTTrainer(BaseTrainer):
+    """Trainer for Chain of Thought reasoning"""
+    def __init__(
+        model: nn.Module,
+        config: Any,
+        learning_rate: float = 1e-4,
+        device: str = "cuda" if torch.cuda.is_available() else "cpu"
+    ):
+        super().__init__(model, config, device)
+        
+        # Initialize optimizer
+        self.optimizer = optim.AdamW(
+            self.model.parameters(),
+            lr=learning_rate
+        )
+        self.scheduler = optim.lr_scheduler.CosineAnnealingLR(
+            self.optimizer,
+            T_max=1000
+        )
+        
+    def train_step(
+        self,
+        batch: Dict[str, torch.Tensor]
+    ) -> Dict[str, float]:
+        """Single training step for chain of thought training"""
+        self.model.train()
+        self.optimizer.zero_grad()
+        
+        # Enable test-time compute for reasoning
+        self.model.enable_test_time()
+        
+        # Get inputs
+        input_ids = batch["input_ids"].to(self.device)
+        target_ids = batch["target_ids"].to(self.device)
+        reasoning_steps = batch["reasoning_steps"].to(self.device) if "reasoning_steps" in batch else None
+        
+        # Forward pass with reasoning
+        outputs = self.model(input_ids)
+        
+        # Get reasoning statistics
+        stats = self.model.get_compute_stats()
+        reasoning_analysis = self.analyze_reasoning(stats['reasoning_steps'][-1])
+        
+        # Compute losses
+        losses = {}
+        
+        # Main task loss
+        losses["task_loss"] = F.cross_entropy(
+            outputs["logits"].view(-1, outputs["logits"].size(-1)),
+            target_ids.view(-1)
+        )
+        
+        # Reasoning quality loss
+        if reasoning_steps is not None:
+            losses["reasoning_loss"] = self.compute_reasoning_loss(
+                reasoning_analysis,
+                reasoning_steps
+            )
+            
+        # Combine losses
+        total_loss = sum(losses.values())
+        
+        # Backward pass
+        total_loss.backward()
+        torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.config.gradient_clip)
+        self.optimizer.step()
+        self.scheduler.step()
+        
+        # Disable test-time compute
+        self.model.disable_test_time()
+        
+        # Return metrics
+        metrics = {
+            "total_loss": total_loss.item(),
+            **{k: v.item() for k, v in losses.items()},
+            "mean_gate_value": np.mean(reasoning_analysis['gate_values']),
+            "mean_impact": np.mean(reasoning_analysis['step_impacts'])
+        }
+        return metrics
+        
+    def compute_reasoning_loss(
+        self,
+        reasoning_analysis: Dict,
+        target_steps: torch.Tensor
+    ) -> torch.Tensor:
+        """Compute loss based on reasoning quality"""
+        # Encourage consistent gate values
+        gate_std = torch.tensor(np.std(reasoning_analysis['gate_values'])).to(self.device)
+        gate_loss = 1.0 / (1.0 + gate_std)
+        
+        # Encourage impactful reasoning steps
+        impact_mean = torch.tensor(np.mean(reasoning_analysis['step_impacts'])).to(self.device)
+        impact_loss = -impact_mean
+        
+        # Encourage alignment with target reasoning steps if provided
+        step_loss = F.mse_loss(
+            torch.tensor(reasoning_analysis['gate_values']).to(self.device),
+            target_steps
+        ) if target_steps is not None else 0
+        
+        return gate_loss + impact_loss + step_loss    def save_checkpoint(
+        self,
+class ImageTrainer(BaseTrainer):
+    """Trainer for image modality"""
+    def __init__(
+        model: nn.Module,
+        config: Any,
+        learning_rate: float = 1e-4,
+        device: str = "cuda" if torch.cuda.is_available() else "cpu"
+    ):
+        super().__init__(model, config, device)
+        
+        # Initialize optimizer
+        self.optimizer = optim.AdamW(
+            self.model.parameters(),
+            lr=learning_rate
+        )
+        self.scheduler = optim.lr_scheduler.CosineAnnealingLR(
+            self.optimizer,
+            T_max=1000
+        )
+        
+    def train_step(
+        self,
+        batch: Dict[str, torch.Tensor]
+    ) -> Dict[str, float]:
+        """Single training step for image modality"""
+        self.model.train()
+        self.optimizer.zero_grad()
+        
+        # Get inputs
+        images = batch["images"].to(self.device)
+        text = batch["text"].to(self.device) if "text" in batch else None
+        labels = batch["labels"].to(self.device) if "labels" in batch else None
+        
+        # Forward pass
+        outputs = self.model(
+            {"image": images, "text": text},
+            input_type="image"
+        )
+        
+        # Compute loss based on available supervision
+        losses = {}
+        
+        if labels is not None:
+            # Classification loss if labels available
+            losses["cls_loss"] = F.cross_entropy(
+                outputs["logits"],
+                labels
+            )
+            
+        if text is not None:
+            # Text alignment loss if text available
+            losses["align_loss"] = self.compute_alignment_loss(
+                outputs["image_features"],
+                outputs["text_features"]
+            )
+            
+        # Combine losses
+        total_loss = sum(losses.values())
+        
+        # Backward pass
+        total_loss.backward()
+        torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.config.gradient_clip)
+        self.optimizer.step()
+        self.scheduler.step()
+        
+        # Return metrics
+        metrics = {
+            "total_loss": total_loss.item(),
+            **{k: v.item() for k, v in losses.items()}
+        }
+        return metrics
+        
+    def compute_alignment_loss(
+        self,
+        image_features: torch.Tensor,
+        text_features: torch.Tensor
+    ) -> torch.Tensor:
+        """Compute contrastive loss between image and text features"""
+        # Normalize features
+        image_features = F.normalize(image_features, dim=-1)
+        text_features = F.normalize(text_features, dim=-1)
+        
+        # Compute similarity matrix
+        similarity = torch.matmul(image_features, text_features.transpose(-2, -1))
+        
+        # Scaled softmax loss
+        loss = -torch.mean(
+            torch.diagonal(
+                F.log_softmax(similarity / 0.07, dim=-1)
+            )
+        )
+        return loss    def save_checkpoint(
+        self,
+        save_dir: str,
+        filename: str,
+        loss: float,
+        step: int
+    ):
+        """Save a training checkpoint"""
+        checkpoint = {
+            'step': step,
+            'model_state_dict': self.student.state_dict(),
+            'optimizer_state_dict': self.optimizer.state_dict(),
+            'scheduler_state_dict': self.scheduler.state_dict(),
+            'loss': loss,
+            'config': self.config
+        }
+        
+        path = os.path.join(save_dir, filename)
+        torch.save(checkpoint, path)
+        logger.info(f"Saved checkpoint to {path}")
+    
+    def evaluate(self, val_dataloader: DataLoader) -> float:
+        """Evaluate the model on validation data"""
+        self.student.eval()
+        total_loss = 0
+        num_batches = 0
+        
+        with torch.no_grad():
+            for batch in val_dataloader:
+                input_ids = batch["input_ids"].to(self.device)
+                target_ids = batch["target_ids"].to(self.device)
+                
+                # Get student predictions
+                student_outputs = self.student(input_ids)
+                student_logits = student_outputs['logits']
+                
+                # Get teacher predictions
+                teacher_inputs = self.convert_to_teacher_tokens(input_ids)
+                teacher_logits = self.teacher(teacher_inputs)
+                
+                # Compute losses
+                distillation_loss = self.compute_distillation_loss(
+                    student_logits,
+                    teacher_logits
+                )
+                
+                task_loss = F.cross_entropy(
+                    student_logits.view(-1, student_logits.size(-1)),
+                    target_ids.view(-1)
+                )
+                
+                # Total loss
+                loss = self.alpha * distillation_loss + (1 - self.alpha) * task_loss
+                total_loss += loss.item()
+                num_batches += 1
+        
+        return total_loss / num_batches# Standard library imports
 import os
 import json
 import logging
@@ -291,7 +749,131 @@ class Trainer:
                     'reasoning_stats': avg_reasoning
                 }, f"{save_dir}/best_model.pt")
 
-class DistillationTrainer:
+class BaseTrainer:
+    """Base trainer class with common functionality"""
+    def __init__(
+        self,
+        model: nn.Module,
+        config: Any,
+        device: str = "cuda" if torch.cuda.is_available() else "cpu"
+    ):
+        self.model = model.to(device)
+        self.config = config
+        self.device = device
+        self.optimizer = None
+        self.scheduler = None
+        
+class MeshTrainer(BaseTrainer):
+    """Trainer for 3D mesh modality"""
+    def __init__(
+        self,
+        model: nn.Module,
+        config: Any,
+        learning_rate: float = 1e-4,
+        device: str = "cuda" if torch.cuda.is_available() else "cpu"
+    ):
+        super().__init__(model, config, device)
+        
+        # Initialize optimizer
+        self.optimizer = optim.AdamW(
+            self.model.parameters(),
+            lr=learning_rate
+        )
+        self.scheduler = optim.lr_scheduler.CosineAnnealingLR(
+            self.optimizer,
+            T_max=1000
+        )
+        
+    def train_step(
+        self,
+        batch: Dict[str, torch.Tensor]
+    ) -> Dict[str, float]:
+        """Single training step for mesh modality"""
+        self.model.train()
+        self.optimizer.zero_grad()
+        
+        # Get inputs
+        vertices = batch["vertices"].to(self.device)
+        faces = batch["faces"].to(self.device)
+        labels = batch["labels"].to(self.device) if "labels" in batch else None
+        
+        # Forward pass
+        outputs = self.model(
+            {"mesh": (vertices, faces)},
+            input_type="mesh"
+        )
+        
+        # Compute losses
+        losses = {}
+        
+        if labels is not None:
+            losses["cls_loss"] = F.cross_entropy(
+                outputs["logits"],
+                labels
+            )
+            
+        if "reconstruction" in outputs:
+            losses["recon_loss"] = F.mse_loss(
+                outputs["reconstruction"],
+                vertices
+            )
+            
+        # Combine losses
+        total_loss = sum(losses.values())
+        
+        # Backward pass
+        total_loss.backward()
+        torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.config.gradient_clip)
+        self.optimizer.step()
+        self.scheduler.step()
+        
+        # Return metrics
+        metrics = {
+            "total_loss": total_loss.item(),
+            **{k: v.item() for k, v in losses.items()}
+        }
+        return metrics    def save_checkpoint(
+        self,
+        save_dir: str,
+        filename: str,
+        extra_data: Dict = None
+    ):
+        """Save a training checkpoint"""
+        os.makedirs(save_dir, exist_ok=True)
+        
+        checkpoint = {
+            'model_state_dict': self.model.state_dict(),
+            'optimizer_state_dict': self.optimizer.state_dict() if self.optimizer else None,
+            'scheduler_state_dict': self.scheduler.state_dict() if self.scheduler else None,
+            'config': self.config
+        }
+        
+        if extra_data:
+            checkpoint.update(extra_data)
+            
+        path = os.path.join(save_dir, filename)
+        torch.save(checkpoint, path)
+        logger.info(f"Saved checkpoint to {path}")
+        
+    def load_checkpoint(self, checkpoint_path: str):
+        """Load a training checkpoint"""
+        logger.info(f"Loading checkpoint from {checkpoint_path}")
+        checkpoint = torch.load(checkpoint_path, map_location=self.device)
+        
+        # Load model weights
+        self.model.load_state_dict(checkpoint['model_state_dict'])
+        
+        # Load optimizer state if it exists
+        if self.optimizer and 'optimizer_state_dict' in checkpoint:
+            self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+            
+        # Load scheduler state if it exists
+        if self.scheduler and 'scheduler_state_dict' in checkpoint:
+            self.scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+            
+        return checkpoint
+
+class DistillationTrainer(BaseTrainer):
     def __init__(
         self,
         student_model: TransformerSquared,
@@ -307,16 +889,15 @@ class DistillationTrainer:
         self.temperature = temperature
         self.alpha = alpha
         
-        # Initialize DeepSeek teacher model
-        self.teacher = AutoModelForCausalLM.from_pretrained(
-            "deepseek-ai/deepseek-coder-33b-instruct",
-            torch_dtype=torch.bfloat16,
-            device_map="auto"
-        )
+        # Initialize local DeepSeek teacher model
+        from Deepseek_model.inference.model import Transformer as DeepSeekTransformer, ModelArgs as DeepSeekArgs
+        deepseek_args = DeepSeekArgs()
+        self.teacher = DeepSeekTransformer(deepseek_args).to(device)
         self.teacher.eval()
-        self.teacher_tokenizer = AutoTokenizer.from_pretrained(
-            "deepseek-ai/deepseek-coder-33b-instruct"
-        )
+        
+        # Optional: Convert teacher to half precision for memory efficiency
+        if torch.cuda.is_available():
+            self.teacher = self.teacher.half()
         
         # Optimizer
         self.optimizer = optim.AdamW(student_model.parameters(), lr=learning_rate)
@@ -344,9 +925,40 @@ class DistillationTrainer:
                     F.log_softmax(attention_maps[-1], dim=-1),
                     dim=-1
                 )
+        
+    def compute_distillation_loss(
+        self,
+        student_logits: torch.Tensor,
+        teacher_logits: torch.Tensor,
+        temperature: float = 2.0
+    ) -> torch.Tensor:
+        """
+        Compute temperature-scaled KL divergence loss for knowledge distillation
+        
+        Args:
+            student_logits: Logits from student model [batch, seq_len, vocab_size]
+            teacher_logits: Logits from teacher model [batch, seq_len, vocab_size]
+            temperature: Temperature for softening probability distributions
+            
+        Returns:
+            KL divergence loss between scaled distributions
+        """
+        # Scale logits by temperature
+        scaled_student = student_logits / temperature
+        scaled_teacher = teacher_logits / temperature
+        
+        # Compute KL divergence loss
+        loss = F.kl_div(
+            F.log_softmax(scaled_student, dim=-1),
+            F.softmax(scaled_teacher, dim=-1),
+            reduction='batchmean'
+        )
+        
+        # Scale loss back by temperature²
+        return loss * (temperature ** 2)
+    
             )
             losses['attention'] = -attn_entropy  # Maximize entropy for diverse attention
-        
         # Expert utilization loss
         if 'expert_weights' in outputs:
             expert_entropy = -torch.mean(
@@ -364,59 +976,56 @@ class DistillationTrainer:
         self,
         batch: Dict[str, torch.Tensor],
     ) -> Dict[str, float]:
-        """Single training step with integrated architectural components"""
+        """Single training step with knowledge distillation using local DeepSeek teacher"""
         self.student.train()
         self.optimizer.zero_grad()
         
         input_ids = batch["input_ids"].to(self.device)
         target_ids = batch["target_ids"].to(self.device)
         
+        # Enable gradient checkpointing for memory efficiency if configured
+        if self.student.use_gradient_checkpointing and hasattr(self.student, 'transformer'):
+            self.student.transformer.use_gradient_checkpointing = True
+        
         # Enable test-time compute for reasoning analysis
         self.student.enable_test_time()
         
-        # Forward pass through student - using the integrated components
+        # Get student predictions first to optimize memory
         student_outputs = self.student(input_ids)
+        student_logits = student_outputs['logits']
         
-        # Get teacher predictions
+        # Get teacher predictions without gradients
         with torch.no_grad():
             teacher_inputs = self.convert_to_teacher_tokens(input_ids)
             teacher_outputs = self.teacher(teacher_inputs.to(self.teacher.device))
             teacher_logits = teacher_outputs.logits.to(self.device)
+            
+            # Ensure teacher and student logits have compatible shapes
+            if teacher_logits.size(1) != student_logits.size(1):
+                min_len = min(teacher_logits.size(1), student_logits.size(1))
+                teacher_logits = teacher_logits[:, :min_len]
+                student_logits = student_logits[:, :min_len]
         
         # Get reasoning statistics
         stats = self.student.get_compute_stats()
         reasoning_analysis = self.analyze_reasoning(stats['reasoning_steps'][-1])
         
-        # Compute architectural losses using the integrated components
-        architecture_losses = self.compute_architecture_loss(
-            student_outputs,
-            student_outputs.get('memory', None),
-            student_outputs.get('attention_maps', [])
-        )
-        
-        # Main losses
-        distillation_loss = self.compute_distillation_loss(
-            student_outputs['logits'], 
-            teacher_logits
-        )
-        
+        # Compute losses
+        distillation_loss = self.compute_distillation_loss(student_logits, teacher_logits)
         task_loss = F.cross_entropy(
-            student_outputs['logits'].view(-1, student_outputs['logits'].size(-1)),
+            student_logits.view(-1, student_logits.size(-1)),
             target_ids.view(-1)
         )
-        
         reasoning_loss = self.compute_reasoning_loss(reasoning_analysis)
         
-        # Combine all losses
-        architecture_loss = sum(architecture_losses.values())
+        # Total loss with reasoning component
         total_loss = (
             self.alpha * distillation_loss +
             (1 - self.alpha) * task_loss +
-            0.1 * reasoning_loss +
-            0.1 * architecture_loss
+            0.1 * reasoning_loss
         )
         
-        # Backward pass
+        # Backward pass with gradient clipping
         total_loss.backward()
         torch.nn.utils.clip_grad_norm_(self.student.parameters(), 1.0)
         self.optimizer.step()
@@ -431,29 +1040,53 @@ class DistillationTrainer:
             "distillation_loss": distillation_loss.item(),
             "task_loss": task_loss.item(),
             "reasoning_loss": reasoning_loss.item(),
-            "architecture_loss": architecture_loss.item(),
             "mean_gate_value": np.mean(reasoning_analysis['gate_values']),
             "mean_impact": np.mean(reasoning_analysis['step_impacts'])
         }
         
-        # Add individual architecture losses to metrics
-        for name, loss in architecture_losses.items():
-            metrics[f"{name}_loss"] = loss.item()
-        
         return metrics
 
     def convert_to_teacher_tokens(self, byte_tokens: torch.Tensor) -> torch.Tensor:
-        """Convert byte-level tokens to teacher model tokens"""
+        """
+        Convert Sushi byte-level tokens into the DeepSeek model's token space.
+        Args:
+            byte_tokens: Tensor of byte-level tokens from Sushi model
+        Returns:
+            Tensor of token indices compatible with DeepSeek's ParallelEmbedding
+        """
         # Decode byte tokens to text
-        texts = self.tokenizer.batch_decode(byte_tokens)
-        # Encode with teacher tokenizer
-        teacher_tokens = self.teacher_tokenizer(
-            texts,
-            padding=True,
-            truncation=True,
-            return_tensors="pt"
+        text_list = self.tokenizer.batch_decode(byte_tokens)
+        
+        # Convert text to DeepSeek token indices
+        teacher_batch_ids = []
+        for text in text_list:
+            tokens = []
+            # Convert each character to a token index within DeepSeek's vocab range
+            for ch in text:
+                token_id = min(ord(ch), self.teacher.embed.vocab_size - 1)
+                tokens.append(token_id)
+            teacher_batch_ids.append(tokens)
+        
+        # Create padded tensor
+        max_len = max(len(t) for t in teacher_batch_ids)
+        max_len = min(max_len, self.teacher.max_seq_len)  # Respect DeepSeek's max length
+        teacher_inputs = torch.full(
+            (len(teacher_batch_ids), max_len),
+            fill_value=0,
+            dtype=torch.long,
+            device=self.device
         )
-        return teacher_tokens.input_ids
+        
+        # Fill tensor with token indices
+        for i, tlist in enumerate(teacher_batch_ids):
+            length = min(len(tlist), max_len)
+            teacher_inputs[i, :length] = torch.tensor(
+                tlist[:length], 
+                dtype=torch.long,
+                device=self.device
+            )
+            
+        return teacher_inputs
     
     def compute_reasoning_loss(self, reasoning_stats: Dict) -> torch.Tensor:
         """Compute loss based on reasoning quality"""
@@ -472,21 +1105,75 @@ class DistillationTrainer:
         train_dataloader: DataLoader,
         val_dataloader: DataLoader,
         num_epochs: int,
-        save_dir: str = "checkpoints"
+        save_dir: str = "checkpoints",
+        eval_steps: int = 100,
+        save_steps: int = 1000
     ):
-        """Full training loop with knowledge distillation"""
+        """
+        Full training loop with knowledge distillation from local DeepSeek teacher
+        
+        Args:
+            train_dataloader: DataLoader for training data
+            val_dataloader: DataLoader for validation data
+            num_epochs: Number of epochs to train
+            save_dir: Directory to save checkpoints
+            eval_steps: Number of steps between evaluations
+            save_steps: Number of steps between saving checkpoints
+        """
         best_val_loss = float('inf')
+        global_step = 0
+        
+        # Create save directory if it doesn't exist
+        os.makedirs(save_dir, exist_ok=True)
         
         for epoch in range(num_epochs):
             # Training
             self.student.train()
             train_metrics = []
+            epoch_loss = 0
             
             pbar = tqdm(train_dataloader, desc=f"Epoch {epoch}")
             for batch in pbar:
                 metrics = self.train_step(batch)
                 train_metrics.append(metrics)
-                pbar.set_postfix(metrics)
+                epoch_loss += metrics['total_loss']
+                global_step += 1
+                
+                # Update progress bar
+                pbar.set_postfix({
+                    'loss': f"{metrics['total_loss']:.4f}",
+                    'distill_loss': f"{metrics['distillation_loss']:.4f}",
+                    'task_loss': f"{metrics['task_loss']:.4f}"
+                })
+                
+                # Evaluate periodically
+                if global_step % eval_steps == 0:
+                    val_loss = self.evaluate(val_dataloader)
+                    
+                    # Log validation results
+                    logger.info(
+                        f"Step {global_step}: val_loss={val_loss:.4f}, "
+                        f"train_loss={epoch_loss/len(train_metrics):.4f}"
+                    )
+                    
+                    # Save if best
+                    if val_loss < best_val_loss:
+                        best_val_loss = val_loss
+                        self.save_checkpoint(
+                            save_dir,
+                            f"best_model_step_{global_step}.pt",
+                            val_loss,
+                            global_step
+                        )
+                
+                # Regular checkpoint saving
+                if global_step % save_steps == 0:
+                    self.save_checkpoint(
+                        save_dir,
+                        f"checkpoint_step_{global_step}.pt",
+                        epoch_loss/len(train_metrics),
+                        global_step
+                    )
             
             # Validation
             self.student.eval()
